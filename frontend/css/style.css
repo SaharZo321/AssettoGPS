@@ -1,0 +1,543 @@
+:root {
+  /* Default Dark / Midnight Theme */
+  --bg-main: #090d16;
+  --bg-card: rgba(15, 23, 42, 0.82);
+  --bg-card-border: rgba(255, 255, 255, 0.12);
+  --text-primary: #ffffff;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent-blue: #0284c7;
+  --accent-cyan: #38bdf8;
+  --accent-green: #22c55e;
+  --accent-yellow: #eab308;
+  --accent-red: #ef4444;
+  --fog-gradient: linear-gradient(to bottom, #090d16 15%, rgba(9, 13, 22, 0.7) 60%, rgba(9, 13, 22, 0) 100%);
+  --modal-bg: #131b2e;
+  --modal-overlay: rgba(0, 0, 0, 0.75);
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+[data-theme="light"] {
+  /* Clean Apple Maps / Day Mode Theme */
+  --bg-main: #e2e8f0;
+  --bg-card: rgba(255, 255, 255, 0.90);
+  --bg-card-border: rgba(0, 0, 0, 0.12);
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --accent-blue: #0284c7;
+  --accent-cyan: #0284c7;
+  --fog-gradient: linear-gradient(to bottom, #e2e8f0 15%, rgba(226, 232, 240, 0.7) 60%, rgba(226, 232, 240, 0) 100%);
+  --modal-bg: #ffffff;
+  --modal-overlay: rgba(15, 23, 42, 0.45);
+}
+
+/* Main App Layout & Responsive Styling */
+
+#app-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  perspective: 1800px;
+  perspective-origin: 50% 65%;
+  overflow: hidden;
+  background: var(--bg-main);
+  transition: background 0.3s ease;
+}
+
+/* Canvas Area - Oversized for deep 3D horizon rendering */
+#map-canvas {
+  position: absolute;
+  top: -80%;
+  left: -40%;
+  width: 180%;
+  height: 180%;
+  z-index: 1;
+  background: var(--bg-main);
+  transform-origin: 50% 80.55%;
+  transition: transform 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+/* Flat 2D HUD Canvas for Upright Billboard Labels */
+#hud-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* 3D Atmospheric Horizon Fog Gradient */
+#horizon-fog {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 150px;
+  z-index: 2;
+  pointer-events: none;
+  background: var(--fog-gradient);
+  opacity: 0;
+  transition: opacity 0.35s ease, background 0.3s ease;
+}
+
+#app-container.is-3d #horizon-fog {
+  opacity: 1;
+}
+
+/* Top Navigation Card (Waze Banner) */
+#nav-banner {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  max-width: 520px;
+  margin: 0 auto;
+  z-index: 10;
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  transition: all 0.3s ease;
+}
+
+#nav-icon-container {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--accent-blue);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  flex-shrink: 0;
+}
+
+#nav-text {
+  flex-grow: 1;
+}
+
+#nav-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+#nav-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+/* Speedometer HUD (Bottom Left) */
+#speedo-hud {
+  position: absolute;
+  bottom: 24px;
+  left: 20px;
+  z-index: 10;
+  padding: 14px 20px;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+}
+
+.speedo-main {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+#speed-value {
+  font-size: 3.8rem;
+  font-weight: 900;
+  font-family: var(--font-mono);
+  line-height: 1;
+  color: var(--text-primary);
+  letter-spacing: -2px;
+}
+
+#speed-unit {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.speedo-sub {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+
+#gear-badge {
+  background: var(--accent-blue);
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 1.2rem;
+  padding: 2px 10px;
+  border-radius: 8px;
+  font-family: var(--font-mono);
+}
+
+/* RPM / Shift Bar */
+#rpm-bar-container {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  margin-top: 10px;
+  overflow: hidden;
+}
+
+#rpm-bar-fill {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-green), var(--accent-yellow) 70%, var(--accent-red) 90%);
+  transition: width 0.05s linear;
+}
+
+/* Floating Controls (Right Side) */
+#floating-controls {
+  position: absolute;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 10;
+}
+
+/* Floating Recenter Button (Waze Style Circular FAB) */
+#btn-recenter {
+  position: absolute;
+  bottom: 96px;
+  right: 20px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1.5px solid var(--accent-blue);
+  color: var(--accent-blue);
+  cursor: pointer;
+  box-shadow: 0 8px 28px rgba(2, 132, 199, 0.45);
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.15s ease, color 0.15s ease, box-shadow 0.2s ease;
+  animation: popIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+#btn-recenter:hover {
+  background: var(--accent-blue);
+  color: #ffffff;
+  transform: scale(1.08) translateY(-2px);
+  box-shadow: 0 12px 32px rgba(56, 189, 248, 0.65);
+}
+
+#btn-recenter:active {
+  transform: scale(0.92);
+}
+
+.recenter-svg {
+  width: 28px;
+  height: 28px;
+}
+
+@keyframes popIn {
+  0% { transform: scale(0.5); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.ctrl-btn {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--bg-card);
+  border: 1px solid var(--bg-card-border);
+  color: var(--text-primary);
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.ctrl-btn:active {
+  transform: scale(0.92);
+}
+
+.ctrl-btn.active {
+  background: var(--accent-blue);
+  color: #fff;
+}
+
+#btn-tilt {
+  font-family: var(--font-sans);
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: -0.5px;
+}
+
+.ctrl-svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+  pointer-events: none;
+}
+
+/* Bottom Journey / Trip Status Bar */
+#trip-status-bar {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: auto;
+  min-width: 500px;
+  max-width: 680px;
+  z-index: 10;
+  padding: 14px 32px;
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  gap: 32px;
+}
+
+.trip-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.trip-label {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.trip-val {
+  font-size: 1.1rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  margin-top: 2px;
+}
+
+/* Modal Overlay */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--modal-overlay);
+  backdrop-filter: blur(8px);
+  z-index: 100;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.modal-content {
+  background: var(--modal-bg);
+  border: 1px solid var(--bg-card-border);
+  color: var(--text-primary);
+  border-radius: 20px;
+  max-width: 420px;
+  width: 100%;
+  padding: 24px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.modal-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 24px;
+  cursor: pointer;
+}
+
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--bg-card-border);
+}
+
+.setting-label {
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+
+select, input[type="button"], button.action-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--bg-card-border);
+  color: var(--text-primary);
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+/* Mobile Portrait Media Queries */
+@media (max-width: 640px) and (orientation: portrait), (max-width: 640px) and (max-aspect-ratio: 1/1) {
+  #speedo-hud {
+    bottom: 85px;
+    left: 12px;
+    padding: 10px 14px;
+  }
+  #speed-value {
+    font-size: 2.8rem;
+  }
+  #trip-status-bar {
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 12px;
+    width: calc(100% - 24px);
+    min-width: 0;
+    max-width: 540px;
+    padding: 10px 18px;
+    gap: 16px;
+  }
+  #btn-recenter {
+    bottom: 85px;
+    right: 12px;
+    width: 50px;
+    height: 50px;
+  }
+  #floating-controls {
+    right: 12px;
+    gap: 8px;
+  }
+  .ctrl-btn {
+    width: 42px;
+    height: 42px;
+    font-size: 18px;
+  }
+}
+
+/* Mobile Horizontal / Landscape Media Queries */
+@media (max-height: 540px) and (orientation: landscape), (max-height: 540px) {
+  /* Top Banner */
+  #nav-banner {
+    top: 8px;
+    padding: 6px 14px;
+    max-width: 360px;
+    gap: 10px;
+  }
+  #nav-icon-container {
+    width: 32px;
+    height: 32px;
+    font-size: 18px;
+    border-radius: 8px;
+  }
+  #nav-title {
+    font-size: 0.95rem;
+  }
+  #nav-subtitle {
+    font-size: 0.72rem;
+  }
+
+  /* Speedometer HUD (Bottom Left) */
+  #speedo-hud {
+    bottom: 10px;
+    left: 12px;
+    padding: 6px 12px;
+    min-width: 105px;
+  }
+  #speed-value {
+    font-size: 2.4rem;
+  }
+  #gear-badge {
+    font-size: 0.95rem;
+    padding: 1px 7px;
+  }
+  #rpm-bar-container {
+    margin-top: 5px;
+    height: 4px;
+  }
+
+  /* Floating Controls (Right Side) */
+  #floating-controls {
+    right: 10px;
+    gap: 6px;
+  }
+  .ctrl-btn {
+    width: 36px;
+    height: 36px;
+    font-size: 15px;
+  }
+  #btn-tilt {
+    font-size: 12px;
+  }
+  .ctrl-svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  /* Recenter FAB Button */
+  #btn-recenter {
+    bottom: 10px;
+    right: 56px;
+    width: 42px;
+    height: 42px;
+  }
+  .recenter-svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  /* Bottom Trip Status Bar */
+  #trip-status-bar {
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: auto;
+    min-width: 380px;
+    max-width: 540px;
+    padding: 8px 24px;
+    gap: 24px;
+  }
+  .trip-label {
+    font-size: 0.62rem;
+  }
+  .trip-val {
+    font-size: 0.9rem;
+  }
+
+  /* Modal Settings */
+  .modal-content {
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 16px 20px;
+  }
+}

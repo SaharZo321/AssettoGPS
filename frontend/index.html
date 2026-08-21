@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0b0f19">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Assetto Corsa GPS Minimap</title>
+  
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/css/waze-theme.css">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="app-container">
+    <!-- Map Canvas (3D Tilted Ground Plane) -->
+    <canvas id="map-canvas"></canvas>
+
+    <!-- Flat 2D HUD Canvas for Upright Billboard Labels (Zero Tilt Distortion) -->
+    <canvas id="hud-canvas"></canvas>
+
+    <!-- 3D Atmospheric Horizon Fog Gradient -->
+    <div id="horizon-fog"></div>
+
+    <!-- Top Waze Navigation Banner -->
+    <div id="nav-banner" class="glass-card">
+      <div id="nav-icon-container">🏁</div>
+      <div id="nav-text">
+        <div id="nav-title">Assetto Corsa GPS</div>
+        <div id="nav-subtitle">Live Navigation Active</div>
+      </div>
+    </div>
+
+    <!-- Speedometer & Shift Lights HUD -->
+    <div id="speedo-hud" class="glass-card glow-cyan">
+      <div class="speedo-main">
+        <span id="speed-value">0</span>
+        <span id="speed-unit">KM/H</span>
+      </div>
+      <div class="speedo-sub">
+        <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">GEAR</span>
+        <span id="gear-badge">N</span>
+      </div>
+      <div id="rpm-bar-container">
+        <div id="rpm-bar-fill"></div>
+      </div>
+    </div>
+
+    <!-- Floating Recenter Button (Waze Style Circular FAB) -->
+    <button id="btn-recenter" class="glass-card" style="display: none;" title="Recenter to car">
+      <svg class="recenter-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="7.5" />
+        <line x1="12" y1="1.5" x2="12" y2="4.5" />
+        <line x1="12" y1="19.5" x2="12" y2="22.5" />
+        <line x1="1.5" y1="12" x2="4.5" y2="12" />
+        <line x1="19.5" y1="12" x2="22.5" y2="12" />
+        <circle cx="12" cy="12" r="2.5" fill="currentColor" />
+      </svg>
+    </button>
+
+    <!-- Floating Right-side Controls -->
+    <div id="floating-controls">
+      <button id="btn-orientation" class="ctrl-btn" title="Toggle Heading-Up / North-Up">
+        <svg class="ctrl-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="12 3 19 20 12 16.5 5 20 12 3" fill="currentColor" stroke="none" />
+        </svg>
+      </button>
+      <button id="btn-tilt" class="ctrl-btn" title="Toggle 2D / 3D Perspective Tilt View">3D</button>
+      <button id="btn-fullscreen" class="ctrl-btn" title="Toggle Fullscreen">
+        <svg class="ctrl-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+        </svg>
+      </button>
+      <button id="btn-settings" class="ctrl-btn" title="Settings & Pairing">
+        <svg class="ctrl-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+      </button>
+    </div>
+
+    <!-- Bottom Trip & Journey Status Bar -->
+    <div id="trip-status-bar" class="glass-card">
+      <div class="trip-item">
+        <span class="trip-label">Trip Dist</span>
+        <span id="trip-dist" class="trip-val">0.0 km</span>
+      </div>
+      <div class="trip-item">
+        <span class="trip-label">Session</span>
+        <span id="trip-time" class="trip-val">00:00</span>
+      </div>
+      <div class="trip-item">
+        <span class="trip-label">Top Speed</span>
+        <span id="top-speed" class="trip-val">0 km/h</span>
+      </div>
+      <div class="trip-item">
+        <span class="trip-label">Fuel</span>
+        <span id="fuel-val" class="trip-val">100%</span>
+      </div>
+    </div>
+
+    <!-- Settings & Device Pairing Modal -->
+    <div id="settings-modal" class="modal-overlay">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div class="modal-title">GPS Settings & Pairing</div>
+          <button id="close-settings" class="close-btn">&times;</button>
+        </div>
+
+        <div class="setting-row">
+          <span class="setting-label">Display Theme</span>
+          <select id="setting-theme">
+            <option value="dark">Night Mode (Dark)</option>
+            <option value="light">Day Mode (Light)</option>
+          </select>
+        </div>
+
+        <div class="setting-row">
+          <span class="setting-label">Speed Units</span>
+          <select id="setting-units">
+            <option value="kmh">Metric (km/h)</option>
+            <option value="mph">Imperial (mph)</option>
+          </select>
+        </div>
+
+        <div class="setting-row">
+          <span class="setting-label">Telemetry Source</span>
+          <select id="setting-mode">
+            <option value="auto">Auto (Live AC or Mock)</option>
+            <option value="live">Live AC Only</option>
+            <option value="mock">Mock Simulator (SRP)</option>
+          </select>
+        </div>
+
+        <div style="margin-top: 20px; text-align: center; color: var(--text-secondary); font-size: 0.85rem;">
+          <p>🏁 <b>Assetto Corsa GPS Companion</b></p>
+          <p style="margin-top: 6px;">Mount your phone or tablet on your sim rig and open the local network URL!</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="/js/audio-alerts.js?v=35"></script>
+  <script src="/js/interpolation.js?v=35"></script>
+  <script src="/js/map-renderer.js?v=35"></script>
+  <script src="/js/navigation-ui.js?v=35"></script>
+  <script src="/js/app.js?v=35"></script>
+</body>
+</html>
