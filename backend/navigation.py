@@ -1,6 +1,6 @@
 """
 Assetto Corsa Navigation & GPS Engine
-Computes distances, top speed, trip stats, and POI cues.
+Computes distances, top speed, trip stats, tunnel detection, and POI cues.
 """
 
 import math

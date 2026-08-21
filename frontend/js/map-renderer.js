@@ -47,6 +47,9 @@ class MapRenderer {
     this.is3D = this.tiltAngle > 10;
     this.manualRotation = 0; // Manual rotation angle in radians
 
+    // Theme Mode (Dark / Light)
+    this.theme = localStorage.getItem("gps_theme") || "dark";
+    this.setTheme(this.theme);
     // Theme Mode: "dark", "light", or "auto" (Hybrid Tunnel & Lighting)
     this.themeMode = localStorage.getItem("gps_theme_mode") || "auto";
     this.theme = "dark";
@@ -339,6 +342,10 @@ class MapRenderer {
     }
   }
 
+  setTheme(theme) {
+    this.theme = theme === "light" ? "light" : "dark";
+    localStorage.setItem("gps_theme", this.theme);
+    document.documentElement.setAttribute("data-theme", this.theme);
   setTheme(themeMode) {
     this.themeMode = ["dark", "light", "auto"].includes(themeMode) ? themeMode : "auto";
     localStorage.setItem("gps_theme_mode", this.themeMode);

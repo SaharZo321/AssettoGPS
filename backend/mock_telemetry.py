@@ -80,6 +80,7 @@ class MockTelemetryGenerator:
         heading_rad = math.atan2(dx, dz)
         heading_deg = math.degrees(heading_rad) % 360
 
+        cur_y = 15.0 + 8.0 * math.sin(self.t * 0.1)
         # Realistic variable elevation (subterranean tunnels vs elevated viaducts)
         if -4900 < cur_x < -3600 and -9900 < cur_z < -6000:
             cur_y = 2.5  # Subterranean Yamate/Shinjuku tunnel
