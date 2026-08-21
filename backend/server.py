@@ -279,6 +279,16 @@ async def set_environment(payload: Dict[str, Any]):
     return {"status": "ok", "environment": environment_state}
 
 
+@app.post("/api/shutdown")
+async def shutdown_server():
+    """Cleanly terminates the server process when stopped from in-game AC UI"""
+    def kill_process():
+        time.sleep(0.4)
+        os._exit(0)
+    threading.Thread(target=kill_process, daemon=True).start()
+    return {"status": "shutting_down"}
+
+
 @app.get("/api/environment")
 async def get_environment():
     """Returns current environmental lighting state"""
