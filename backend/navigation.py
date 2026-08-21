@@ -13,7 +13,7 @@ def calculate_distance_2d(p1: List[float], p2: List[float]) -> float:
 
 
 class TunnelDetector:
-    """Detects whether the car is inside an underground/tunnel zone based on track coordinates & elevation"""
+    """Detects whether the car is inside an underground/tunnel zone based on elevation and track coordinates"""
 
     @staticmethod
     def detect_tunnel(track_name: str, car_pos: List[float]) -> Dict[str, Any]:
@@ -26,33 +26,24 @@ class TunnelDetector:
 
         # 1. Shutoko Revival Project (SRP / Tokyo Expressway)
         if is_srp:
-            # Haneda Airport Subsea Tunnel & Tokyo Bay Tunnels
-            if y < 14.0 and -3000 < x < 4500 and 1000 < z < 9200:
-                return {"inTunnel": True, "tunnelName": "Haneda Subsea Tunnel"}
-
-            # Yamate Tunnel (Deep underground C2 Central Circular segment)
-            if y < 18.0 and -6800 < x < -1800 and -13000 < z < -1000:
-                return {"inTunnel": True, "tunnelName": "Yamate Tunnel (C2)"}
-
-            # C1 Inner/Outer Loop subterranean underpasses (Shiodome, Kasumigaseki, Miyakezaka, Chiyoda)
-            if y < 16.0 and -2200 < x < 2800 and -9200 < z < -3500:
-                return {"inTunnel": True, "tunnelName": "C1 Underground Segment"}
-
-            # Route 3 / Route 4 / Shibuya / Shinjuku tunnel underpasses
-            if y < 22.0 and -5500 < x < -2500 and -10500 < z < -5000:
-                return {"inTunnel": True, "tunnelName": "Shinjuku / Shibuya Tunnel"}
-
-            # Yokohama K3 / K5 / Minato Mirai tunnel underpasses
-            if y < 18.0 and -12000 < x < -6000 and 12000 < z < 16500:
-                return {"inTunnel": True, "tunnelName": "Yokohama Tunnel"}
-
-            # General SRP underground / subsea elevation (surface viaducts are elevated at y >= 14m to 48m)
-            if y < 4.0:
-                return {"inTunnel": True, "tunnelName": "Underground Tunnel"}
+            # On SRP: Open air roads are elevated at y >= +8m to +48m.
+            # Underground/subsea tunnels plunge below sea level at y <= +0.5m.
+            if y <= 0.5:
+                # Name specific tunnels by location
+                if -6800 < x < -1800 and -13000 < z < -1000:
+                    return {"inTunnel": True, "tunnelName": "Yamate Tunnel (C2)"}
+                elif -2500 < x < 4500 and 1000 < z < 9000:
+                    return {"inTunnel": True, "tunnelName": "Haneda Subsea Tunnel"}
+                elif -2200 < x < 2800 and -9200 < z < -3500:
+                    return {"inTunnel": True, "tunnelName": "C1 Underground Segment"}
+                elif 1000 < x < 4500 and -4000 < z < 500:
+                    return {"inTunnel": True, "tunnelName": "Tokyo Port Tunnel"}
+                else:
+                    return {"inTunnel": True, "tunnelName": "Tunnel"}
 
         # 2. Monaco / Circuit de Monaco (Fairmont / Larvotto Tunnel)
         elif "monaco" in track_lower or "monte" in track_lower:
-            if y < 20.0 and -120 < x < 350 and 150 < z < 650:
+            if y < 14.0 and -80 < x < 280 and 200 < z < 550:
                 return {"inTunnel": True, "tunnelName": "Monaco Tunnel"}
 
         # 3. Generic tracks: subterranean elevation below ground

@@ -82,11 +82,11 @@ class MockTelemetryGenerator:
 
         # Realistic variable elevation (subterranean tunnels vs elevated viaducts)
         if -4900 < cur_x < -3600 and -9900 < cur_z < -6000:
-            cur_y = 2.5  # Subterranean Yamate/Shinjuku tunnel
+            cur_y = -8.0  # Subterranean Yamate tunnel
         elif 200 < cur_x < 2200 and -6500 < cur_z < -4500:
-            cur_y = 7.0  # C1 underground segment
+            cur_y = -4.0  # C1 underground segment
         else:
-            cur_y = 18.0 + 8.0 * math.sin(self.t * 0.1)
+            cur_y = 18.0 + 8.0 * math.sin(self.t * 0.1)  # Elevated open-air viaduct (10m to 26m)
 
         # Realistic variable speed (straights vs curves)
         curvature = abs(math.sin(self.t * 0.3))
