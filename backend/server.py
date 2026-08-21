@@ -97,9 +97,36 @@ def start_udp_listener(port: int = 8088):
             pass
 
 
-# Start UDP listener daemon thread
+def ac_watchdog_loop():
+    """Monitors Assetto Corsa process. If AC is closed, auto-shuts down server after a grace period."""
+    import subprocess
+    time.sleep(8.0)  # Initial startup grace period
+    inactive_count = 0
+
+    while True:
+        time.sleep(3.0)
+        try:
+            out = subprocess.check_output(["tasklist"], stderr=subprocess.DEVNULL).decode("utf-8", errors="ignore").lower()
+            is_ac_alive = ("acs.exe" in out) or ("assettocorsa.exe" in out)
+
+            if is_ac_alive:
+                inactive_count = 0
+            else:
+                inactive_count += 1
+                # If game process has been absent for ~9 seconds
+                if inactive_count >= 3:
+                    print("[-] Assetto Corsa has closed. Automatically shutting down GPS server.")
+                    os._exit(0)
+        except Exception:
+            pass
+
+
+# Start UDP listener and AC watchdog daemon threads
 udp_thread = threading.Thread(target=start_udp_listener, daemon=True)
 udp_thread.start()
+
+watchdog_thread = threading.Thread(target=ac_watchdog_loop, daemon=True)
+watchdog_thread.start()
 
 
 def get_local_ip() -> str:
