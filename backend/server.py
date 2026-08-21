@@ -122,12 +122,12 @@ def print_startup_banner(port: int = 8080):
     network_url = f"http://{local_ip}:{port}"
 
     print("=" * 65)
-    print("  🏁 ASSETTO CORSA WAZE/GPS MINIMAP SERVER")
+    print("  ASSETTO CORSA GPS MINIMAP SERVER")
     print("=" * 65)
-    print(f"  🖥️  Local 2nd Screen URL : {local_url}")
-    print(f"  📱 Phone / Tablet URL    : {network_url}")
+    print(f"  Local URL : {local_url}")
+    print(f"  Phone / Tablet URL : {network_url}")
     print("-" * 65)
-    print("  👉 Scan with your Phone Camera to open the GPS dashboard:")
+    print("  Open on your mobile browser / tablet:")
     try:
         import qrcode
 
@@ -279,11 +279,11 @@ async def set_environment(payload: Dict[str, Any]):
     return {"status": "ok", "environment": environment_state}
 
 
-@app.post("/api/shutdown")
+@app.api_route("/api/shutdown", methods=["GET", "POST"])
 async def shutdown_server():
     """Cleanly terminates the server process when stopped from in-game AC UI"""
     def kill_process():
-        time.sleep(0.4)
+        time.sleep(0.3)
         os._exit(0)
     threading.Thread(target=kill_process, daemon=True).start()
     return {"status": "shutting_down"}
@@ -396,17 +396,17 @@ if FRONTEND_DIR.exists():
 
 
 def sync_ac_plugin():
-    """Ensures the in-game AssettoGPS Python app is installed in the user's Assetto Corsa folder"""
+    """Ensures the in-game AssettoGPS CSP Lua app is installed in the user's Assetto Corsa folder"""
     try:
         if track_finder.ac_root and track_finder.ac_root.exists():
-            target_dir = track_finder.ac_root / "apps" / "python" / "AssettoGPS"
-            target_dir.mkdir(parents=True, exist_ok=True)
-            src_file = BASE_DIR / "ac_app" / "AssettoGPS" / "AssettoGPS.py"
-            dst_file = target_dir / "AssettoGPS.py"
-            if src_file.exists():
+            target_lua_dir = track_finder.ac_root / "apps" / "lua" / "AssettoGPS"
+            target_lua_dir.mkdir(parents=True, exist_ok=True)
+            src_lua_dir = BASE_DIR / "ac_app" / "lua" / "AssettoGPS"
+            if src_lua_dir.exists():
                 import shutil
-                shutil.copyfile(src_file, dst_file)
-                print(f"  🎮 In-Game AC App Synced: {dst_file}")
+                for f in src_lua_dir.iterdir():
+                    shutil.copyfile(f, target_lua_dir / f.name)
+                print(f"  [+] In-Game AC Lua App Synced: {target_lua_dir}")
     except Exception as e:
         print(f"Could not auto-sync AC in-game plugin: {e}")
 
