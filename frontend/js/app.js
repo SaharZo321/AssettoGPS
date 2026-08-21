@@ -222,9 +222,6 @@ class App {
       }
     });
 
-    // 1. Display Theme Segmented Control (Night / Day)
-    const currentTheme = this.renderer.theme || "dark";
-    this.updateSegmentedActive("control-theme", "data-theme", currentTheme);
     // 1. Display Theme Segmented Control (Night / Day / Auto)
     const currentThemeMode = this.renderer.themeMode || "auto";
     this.updateSegmentedActive("control-theme", "data-theme", currentThemeMode);

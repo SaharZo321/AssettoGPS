@@ -1,6 +1,6 @@
 """
 Assetto Corsa Navigation & GPS Engine
-Computes distances, top speed, trip stats, tunnel detection, and POI cues.
+Computes distances, top speed, trip stats, and POI cues.
 """
 
 import math
@@ -22,32 +22,41 @@ class TunnelDetector:
 
         x, y, z = car_pos[0], car_pos[1], car_pos[2]
         track_lower = str(track_name).lower()
+        is_srp = "shuto" in track_lower or "srp" in track_lower or "ptb" in track_lower or not track_name
 
         # 1. Shutoko Revival Project (SRP / Tokyo Expressway)
-        if "shutoko" in track_lower or "srp" in track_lower or "ptb" in track_lower or not track_name:
+        if is_srp:
+            # Haneda Airport Subsea Tunnel & Tokyo Bay Tunnels
+            if y < 14.0 and -3000 < x < 4500 and 1000 < z < 9200:
+                return {"inTunnel": True, "tunnelName": "Haneda Subsea Tunnel"}
+
             # Yamate Tunnel (Deep underground C2 Central Circular segment)
-            if y < 8.0 and -6400 < x < -2100 and -12500 < z < -1400:
+            if y < 18.0 and -6800 < x < -1800 and -13000 < z < -1000:
                 return {"inTunnel": True, "tunnelName": "Yamate Tunnel (C2)"}
 
-            # Tokyo Bay / Haneda / Kawasaki Subsea & Underpass Tunnels
-            if y < 5.0 and -2500 < x < 4200 and 1200 < z < 9200:
-                return {"inTunnel": True, "tunnelName": "Haneda / Tokyo Bay Tunnel"}
-
-            # C1 Inner/Outer Loop subterranean underpasses (Shiodome, Kasumigaseki, Chiyoda)
-            if y < 10.5 and -1600 < x < 2600 and -8600 < z < -4200:
+            # C1 Inner/Outer Loop subterranean underpasses (Shiodome, Kasumigaseki, Miyakezaka, Chiyoda)
+            if y < 16.0 and -2200 < x < 2800 and -9200 < z < -3500:
                 return {"inTunnel": True, "tunnelName": "C1 Underground Segment"}
 
-            # Generic SRP underground elevation (surface viaducts are elevated at y >= 12m to 48m)
-            if y < 3.5:
-                return {"inTunnel": True, "tunnelName": "Tunnel Underpass"}
+            # Route 3 / Route 4 / Shibuya / Shinjuku tunnel underpasses
+            if y < 22.0 and -5500 < x < -2500 and -10500 < z < -5000:
+                return {"inTunnel": True, "tunnelName": "Shinjuku / Shibuya Tunnel"}
+
+            # Yokohama K3 / K5 / Minato Mirai tunnel underpasses
+            if y < 18.0 and -12000 < x < -6000 and 12000 < z < 16500:
+                return {"inTunnel": True, "tunnelName": "Yokohama Tunnel"}
+
+            # General SRP underground / subsea elevation (surface viaducts are elevated at y >= 14m to 48m)
+            if y < 4.0:
+                return {"inTunnel": True, "tunnelName": "Underground Tunnel"}
 
         # 2. Monaco / Circuit de Monaco (Fairmont / Larvotto Tunnel)
         elif "monaco" in track_lower or "monte" in track_lower:
-            if y < 16.0 and -120 < x < 320 and 180 < z < 620:
+            if y < 20.0 and -120 < x < 350 and 150 < z < 650:
                 return {"inTunnel": True, "tunnelName": "Monaco Tunnel"}
 
-        # 3. Generic tracks: subterranean elevation trigger
-        elif y < -8.0:
+        # 3. Generic tracks: subterranean elevation below ground
+        elif y < -3.0:
             return {"inTunnel": True, "tunnelName": "Tunnel"}
 
         return {"inTunnel": False, "tunnelName": None}
