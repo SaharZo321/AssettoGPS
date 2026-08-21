@@ -1,45 +1,40 @@
 -- Assetto GPS Companion (CSP Lua App)
--- Auto-boots server, displays Phone Pairing URL, and syncs headlights
+-- Native Asynchronous Web/Socket (Zero cmd popups, Zero freezing)
 
 local server_dir = "C:\\Coding\\AssettoMiniMap"
 local server_port = 8080
 local local_ip = "127.0.0.1"
 local server_running = false
+local auto_boot_done = false
 local last_check = 0
 local last_lighting_check = 0
 
--- Find local IP on startup
-local function detectLocalIP()
-  local p = io.popen("powershell -Command \"(Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'Wi-Fi*','Ethernet*' | Where-Object {$_.IPAddress -notlike '169.254*'} | Select-Object -First 1).IPAddress\"")
-  if p then
-    local res = p:read("*a")
-    p:close()
-    if res and #res > 6 then
-      local_ip = res:gsub("%s+", "")
-    end
-  end
-end
-
--- Check if port 8080 is listening
-local function checkServerStatus()
-  local p = io.popen('powershell -Command "Test-NetConnection -ComputerName 127.0.0.1 -Port ' .. server_port .. ' -InformationLevel Quiet"')
-  if p then
-    local res = p:read("*a")
-    p:close()
-    if res and res:find("True") then
+-- Asynchronously ping local server status (zero blocking, zero cmd windows)
+local function checkServerStatus(callback)
+  web.get("http://127.0.0.1:" .. server_port .. "/api/status", function(err, response)
+    if not err and response and response.status == 200 then
       server_running = true
-      return true
+      if response.body then
+        local ip = response.body:match('"localIp"%s*:%s*"([^"]+)"')
+        if ip and #ip > 6 then
+          local_ip = ip
+        end
+      end
+      if callback then callback(true) end
+    else
+      server_running = false
+      if callback then callback(false) end
     end
-  end
-  server_running = false
-  return false
+  end)
 end
 
--- Start server in background
+-- Start server in background (runs once silently)
 local function startServer()
-  local cmd = 'start "" /B powershell -WindowStyle Hidden -Command "cd \\"' .. server_dir .. '\\"; & \\"$env:USERPROFILE\\.local\\bin\\uv.exe\\" run backend/server.py"'
+  local cmd = 'cd /d "' .. server_dir .. '" && start "" /B "%USERPROFILE%\\.local\\bin\\uv.exe" run backend\\server.py'
   os.execute(cmd)
-  server_running = true
+  setTimeout(function()
+    checkServerStatus()
+  end, 1.5)
 end
 
 -- Stop server
@@ -48,25 +43,24 @@ local function stopServer()
   server_running = false
 end
 
--- Initial boot sequence
+-- One-shot silent auto-boot on startup
 setTimeout(function()
-  detectLocalIP()
-  if not checkServerStatus() then
-    startServer()
-    setTimeout(function()
-      checkServerStatus()
-    end, 2.0)
-  end
-end, 0.5)
+  checkServerStatus(function(alive)
+    if not alive and not auto_boot_done then
+      auto_boot_done = true
+      startServer()
+    end
+  end)
+end, 1.0)
 
--- Main in-game UI Window
+-- Main in-game UI Window (ImGui)
 function windowMain(dt)
   ui.pushFont(ui.Font.Title)
   ui.text("Assetto GPS Minimap")
   ui.popFont()
   ui.separator()
 
-  -- Status Indicator
+  -- Server Status
   ui.text("Server Status: ")
   ui.sameLine()
   if server_running then
@@ -81,17 +75,17 @@ function windowMain(dt)
   ui.sameLine()
   ui.textColored(phone_url, rgbm(0.22, 0.74, 0.97, 1.0))
 
-  if ui.button("Copy URL", vec2(120, 26)) then
+  if ui.button("Copy URL", vec2(110, 24)) then
     ui.setClipboardText(phone_url)
   end
 
   ui.sameLine()
   if server_running then
-    if ui.button("Stop Server", vec2(120, 26)) then
+    if ui.button("Stop Server", vec2(110, 24)) then
       stopServer()
     end
   else
-    if ui.button("Start Server", vec2(120, 26)) then
+    if ui.button("Start Server", vec2(110, 24)) then
       startServer()
     end
   end
@@ -108,10 +102,11 @@ function windowMain(dt)
   end
 end
 
--- Periodic update loop
+-- Periodic async update loop
 function script.update(dt)
   local now = os.clock()
 
+  -- Sync headlights every 0.1s via async web post
   if now - last_lighting_check > 0.1 then
     last_lighting_check = now
     local car = ac.getCar(0)
@@ -127,7 +122,8 @@ function script.update(dt)
     end
   end
 
-  if now - last_check > 3.0 then
+  -- Async heartbeat every 4 seconds (zero blocking)
+  if now - last_check > 4.0 then
     last_check = now
     checkServerStatus()
   end
