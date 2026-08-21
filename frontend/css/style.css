@@ -497,7 +497,8 @@
 }
 
 [data-theme="light"] .segmented-control {
-  background: rgba(0, 0, 0, 0.05);
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.12);
 }
 
 .segmented-btn {
@@ -524,28 +525,68 @@
   width: 18px;
   height: 18px;
   flex-shrink: 0;
+  stroke: currentColor;
   transition: transform 0.2s ease, stroke 0.2s ease;
 }
 
 .segmented-btn:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.segmented-btn:hover .setting-svg {
+  stroke: currentColor;
+}
+
+[data-theme="light"] .segmented-btn {
+  color: #475569;
+}
+
+[data-theme="light"] .segmented-btn .setting-svg {
+  stroke: #475569;
 }
 
 [data-theme="light"] .segmented-btn:hover {
-  background: rgba(0, 0, 0, 0.04);
+  color: #0f172a !important;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .segmented-btn:hover span {
+  color: #0f172a !important;
+}
+
+[data-theme="light"] .segmented-btn:hover .setting-svg {
+  stroke: #0f172a !important;
 }
 
 .segmented-btn.active {
-  background: var(--accent-blue);
+  background: var(--accent-blue) !important;
   color: #ffffff !important;
   box-shadow: 0 4px 14px rgba(2, 132, 199, 0.45);
   font-weight: 700;
 }
 
+.segmented-btn.active span {
+  color: #ffffff !important;
+}
+
 .segmented-btn.active .setting-svg {
   transform: scale(1.1);
-  stroke: #ffffff;
+  stroke: #ffffff !important;
+}
+
+[data-theme="light"] .segmented-btn.active {
+  background: var(--accent-blue) !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
+}
+
+[data-theme="light"] .segmented-btn.active span {
+  color: #ffffff !important;
+}
+
+[data-theme="light"] .segmented-btn.active .setting-svg {
+  stroke: #ffffff !important;
 }
 
 .segmented-btn:active {
