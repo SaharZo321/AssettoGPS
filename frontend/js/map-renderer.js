@@ -47,9 +47,11 @@ class MapRenderer {
     this.is3D = this.tiltAngle > 10;
     this.manualRotation = 0; // Manual rotation angle in radians
 
-    // Theme Mode (Dark / Light)
-    this.theme = localStorage.getItem("gps_theme") || "dark";
-    this.setTheme(this.theme);
+    // Theme Mode: "dark", "light", or "auto" (Hybrid Tunnel & Lighting)
+    this.themeMode = localStorage.getItem("gps_theme_mode") || "auto";
+    this.theme = "dark";
+    this.lastEnvData = null;
+    this.setTheme(this.themeMode);
 
     this.recenterBtn = document.getElementById("btn-recenter");
     if (this.recenterBtn) {
@@ -337,10 +339,53 @@ class MapRenderer {
     }
   }
 
-  setTheme(theme) {
-    this.theme = theme === "light" ? "light" : "dark";
-    localStorage.setItem("gps_theme", this.theme);
-    document.documentElement.setAttribute("data-theme", this.theme);
+  setTheme(themeMode) {
+    this.themeMode = ["dark", "light", "auto"].includes(themeMode) ? themeMode : "auto";
+    localStorage.setItem("gps_theme_mode", this.themeMode);
+
+    if (this.themeMode === "auto") {
+      this.evaluateAutoTheme(this.lastEnvData);
+    } else {
+      this.applyTheme(this.themeMode);
+    }
+  }
+
+  applyTheme(activeTheme) {
+    const target = activeTheme === "light" ? "light" : "dark";
+    if (this.theme !== target || document.documentElement.getAttribute("data-theme") !== target) {
+      this.theme = target;
+      document.documentElement.setAttribute("data-theme", target);
+    }
+  }
+
+  evaluateAutoTheme(envData) {
+    if (this.themeMode !== "auto") return;
+
+    // 1. If car is inside a tunnel -> Force Night (Dark) mode
+    if (envData && envData.inTunnel) {
+      this.applyTheme("dark");
+      return;
+    }
+
+    // 2. If CSP headlights or in-game night signal is active -> Force Night mode
+    if (envData && (envData.headlights || envData.isNight)) {
+      this.applyTheme("dark");
+      return;
+    }
+
+    // 3. Open air daylight / solar time evaluation (Day mode between 06:30 and 19:30)
+    const now = new Date();
+    const currentDecimalHour = now.getHours() + now.getMinutes() / 60;
+    const isDaylightTime = currentDecimalHour >= 6.5 && currentDecimalHour < 19.5;
+
+    this.applyTheme(isDaylightTime ? "light" : "dark");
+  }
+
+  updateEnvironment(envData) {
+    this.lastEnvData = envData;
+    if (this.themeMode === "auto") {
+      this.evaluateAutoTheme(envData);
+    }
   }
 
   toggleOrientation() {

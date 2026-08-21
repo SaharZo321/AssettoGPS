@@ -57,6 +57,14 @@ server_state = {
     "lastFrame": None,
 }
 
+# Environmental lighting state (from CSP bridge, tunnels, or manual overrides)
+environment_state = {
+    "headlights": False,
+    "sunAngle": 1.0,  # 1.0 = noon, 0.0 = sunset, -1.0 = midnight
+    "isNight": False,
+    "source": "auto",  # "auto", "csp", "manual"
+}
+
 
 def get_local_ip() -> str:
     """Finds the local LAN IP address of this machine"""
@@ -219,6 +227,28 @@ async def set_mode(payload: Dict[str, str]):
     return {"status": "ok", "mode": server_state["mode"]}
 
 
+@app.post("/api/environment")
+async def set_environment(payload: Dict[str, Any]):
+    """Receives in-game environmental lighting, headlights, and night status from CSP or companion mods"""
+    if "headlights" in payload:
+        environment_state["headlights"] = bool(payload["headlights"])
+    if "isNight" in payload:
+        environment_state["isNight"] = bool(payload["isNight"])
+    if "sunAngle" in payload:
+        try:
+            environment_state["sunAngle"] = float(payload["sunAngle"])
+        except (ValueError, TypeError):
+            pass
+    environment_state["source"] = "csp"
+    return {"status": "ok", "environment": environment_state}
+
+
+@app.get("/api/environment")
+async def get_environment():
+    """Returns current environmental lighting state"""
+    return environment_state
+
+
 @app.websocket("/ws/telemetry")
 async def websocket_endpoint(websocket: WebSocket):
     """Real-time 30-60 Hz telemetry streaming endpoint"""
@@ -289,6 +319,14 @@ async def websocket_endpoint(websocket: WebSocket):
                 "mapWidth": track_info.get("mapWidth", 1024),
                 "mapHeight": track_info.get("mapHeight", 1024),
                 "pois": pois,
+            }
+            frame["environment"] = {
+                "inTunnel": bool(nav_data.get("inTunnel", False)),
+                "tunnelName": nav_data.get("tunnelName", None),
+                "headlights": bool(environment_state.get("headlights", False)),
+                "isNight": bool(environment_state.get("isNight", False)),
+                "sunAngle": float(environment_state.get("sunAngle", 1.0)),
+                "source": str(environment_state.get("source", "auto")),
             }
 
             server_state["lastFrame"] = frame

@@ -54,6 +54,10 @@ class App {
         if (frame.trackInfo) {
           this.renderer.setTrackInfo(frame.trackInfo, frame.track);
         }
+
+        if (frame.environment) {
+          this.renderer.updateEnvironment(frame.environment);
+        }
       } catch (e) {
         console.error("Frame parse error", e);
       }
@@ -218,9 +222,9 @@ class App {
       }
     });
 
-    // 1. Display Theme Segmented Control (Night / Day)
-    const currentTheme = this.renderer.theme || "dark";
-    this.updateSegmentedActive("control-theme", "data-theme", currentTheme);
+    // 1. Display Theme Segmented Control (Night / Day / Auto)
+    const currentThemeMode = this.renderer.themeMode || "auto";
+    this.updateSegmentedActive("control-theme", "data-theme", currentThemeMode);
     const themeButtons = document.querySelectorAll("#control-theme .segmented-btn");
     themeButtons.forEach((btn) => {
       btn.addEventListener("click", () => {
