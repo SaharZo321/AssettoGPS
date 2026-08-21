@@ -100,52 +100,226 @@
       </div>
     </div>
 
-    <!-- Settings & Device Pairing Modal -->
+    <!-- Settings & Device Pairing Modal / Mobile Bottom Sheet -->
     <div id="settings-modal" class="modal-overlay">
-      <div class="modal-content">
+      <div class="modal-content glass-card">
+        <div class="sheet-drag-handle" aria-hidden="true"></div>
+        
         <div class="modal-header">
-          <div class="modal-title">GPS Settings & Pairing</div>
-          <button id="close-settings" class="close-btn">&times;</button>
+          <div class="modal-title">
+            <svg class="modal-title-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+            <span>Navigation Settings</span>
+          </div>
+          <button id="close-settings" class="close-btn" aria-label="Close Settings" title="Close">
+            <svg class="close-btn-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
         </div>
 
-        <div class="setting-row">
-          <span class="setting-label">Display Theme</span>
-          <select id="setting-theme">
-            <option value="dark">Night Mode (Dark)</option>
-            <option value="light">Day Mode (Light)</option>
-          </select>
-        </div>
+        <div class="modal-body">
+          <!-- Theme Setting -->
+          <div class="setting-group">
+            <div class="setting-group-header">
+              <span class="setting-group-title">APPEARANCE</span>
+            </div>
+            <div class="segmented-control" id="control-theme" role="radiogroup" aria-label="Display Theme">
+              <button type="button" class="segmented-btn active" data-theme="dark" role="radio" aria-checked="true">
+                <svg class="setting-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                </svg>
+                <span>Night Mode</span>
+              </button>
+              <button type="button" class="segmented-btn" data-theme="light" role="radio" aria-checked="false">
+                <svg class="setting-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="5" />
+                  <line x1="12" y1="1" x2="12" y2="3" />
+                  <line x1="12" y1="21" x2="12" y2="23" />
+                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                  <line x1="1" y1="12" x2="3" y2="12" />
+                  <line x1="21" y1="12" x2="23" y2="12" />
+                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                </svg>
+                <span>Day Mode</span>
+              </button>
+            </div>
+          </div>
 
-        <div class="setting-row">
-          <span class="setting-label">Speed Units</span>
-          <select id="setting-units">
-            <option value="kmh">Metric (km/h)</option>
-            <option value="mph">Imperial (mph)</option>
-          </select>
-        </div>
+          <!-- Units Setting -->
+          <div class="setting-group">
+            <div class="setting-group-header">
+              <span class="setting-group-title">SPEED & UNITS</span>
+            </div>
+            <div class="segmented-control" id="control-units" role="radiogroup" aria-label="Speed Units">
+              <button type="button" class="segmented-btn active" data-unit="kmh" role="radio" aria-checked="true">
+                <svg class="setting-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2a10 10 0 0 0-7.07 17.07L12 12l4.95 2.12" />
+                  <circle cx="12" cy="12" r="2" />
+                  <path d="M4.93 4.93a10 10 0 0 1 14.14 0" />
+                </svg>
+                <span>Metric (KM/H)</span>
+              </button>
+              <button type="button" class="segmented-btn" data-unit="mph" role="radio" aria-checked="false">
+                <svg class="setting-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2a10 10 0 0 0-7.07 17.07L12 12l4.95 2.12" />
+                  <circle cx="12" cy="12" r="2" />
+                  <path d="M4.93 4.93a10 10 0 0 1 14.14 0" />
+                </svg>
+                <span>Imperial (MPH)</span>
+              </button>
+            </div>
+          </div>
 
-        <div class="setting-row">
-          <span class="setting-label">Telemetry Source</span>
-          <select id="setting-mode">
-            <option value="auto">Auto (Live AC or Mock)</option>
-            <option value="live">Live AC Only</option>
-            <option value="mock">Mock Simulator (SRP)</option>
-          </select>
-        </div>
+          <!-- Toggles Setting (Audio & Auto-Zoom) -->
+          <div class="setting-group">
+            <div class="setting-group-header">
+              <span class="setting-group-title">AUDIO & CAMERA</span>
+            </div>
+            
+            <div class="toggle-card">
+              <div class="toggle-row">
+                <div class="toggle-info">
+                  <div class="toggle-label-with-icon">
+                    <svg class="setting-svg-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                    </svg>
+                    <span class="toggle-title">Sound Alerts & Traps</span>
+                  </div>
+                  <span class="toggle-desc">Speed camera cues & overspeed warnings</span>
+                </div>
+                <label class="switch" aria-label="Toggle Sound Alerts">
+                  <input type="checkbox" id="toggle-audio-alerts" checked>
+                  <span class="slider"></span>
+                </label>
+              </div>
 
-        <div style="margin-top: 20px; text-align: center; color: var(--text-secondary); font-size: 0.85rem;">
-          <p>🏁 <b>Assetto Corsa GPS Companion</b></p>
-          <p style="margin-top: 6px;">Mount your phone or tablet on your sim rig and open the local network URL!</p>
+              <div class="toggle-row">
+                <div class="toggle-info">
+                  <div class="toggle-label-with-icon">
+                    <svg class="setting-svg-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="11" cy="11" r="8" />
+                      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                      <line x1="11" y1="8" x2="11" y2="14" />
+                      <line x1="8" y1="11" x2="14" y2="11" />
+                    </svg>
+                    <span class="toggle-title">Dynamic Auto-Zoom</span>
+                  </div>
+                  <span class="toggle-desc">Adapts map zoom to your driving speed</span>
+                </div>
+                <label class="switch" aria-label="Toggle Dynamic Auto-Zoom">
+                  <input type="checkbox" id="toggle-auto-zoom" checked>
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Telemetry Source Setting -->
+          <div class="setting-group">
+            <div class="setting-group-header">
+              <span class="setting-group-title">TELEMETRY SOURCE</span>
+            </div>
+            <div class="segmented-control mode-control" id="control-mode" role="radiogroup" aria-label="Telemetry Source">
+              <button type="button" class="segmented-btn active" data-mode="auto" role="radio" aria-checked="true">
+                <svg class="setting-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                </svg>
+                <span>Auto</span>
+              </button>
+              <button type="button" class="segmented-btn" data-mode="live" role="radio" aria-checked="false">
+                <svg class="setting-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.5 2.8C2.1 11 2 11.5 2 12v4c0 .6.4 1 1 1h2" />
+                  <circle cx="7" cy="17" r="2" />
+                  <path d="M9 17h6" />
+                  <circle cx="17" cy="17" r="2" />
+                </svg>
+                <span>Live AC</span>
+              </button>
+              <button type="button" class="segmented-btn" data-mode="mock" role="radio" aria-checked="false">
+                <svg class="setting-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="6" y1="12" x2="10" y2="12" />
+                  <line x1="8" y1="10" x2="8" y2="14" />
+                  <line x1="15" y1="13" x2="15.01" y2="13" stroke-width="3" />
+                  <line x1="18" y1="11" x2="18.01" y2="11" stroke-width="3" />
+                  <rect x="2" y="6" width="20" height="12" rx="6" />
+                </svg>
+                <span>Mock Sim</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Session Actions & Reset -->
+          <div class="setting-group">
+            <button id="btn-reset-session" class="setting-action-btn" type="button">
+              <svg class="setting-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="1 4 1 10 7 10" />
+                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+              </svg>
+              <span>Reset Trip & Session Stats</span>
+            </button>
+          </div>
+
+          <!-- Sim Rig Pairing & Connection Status Card -->
+          <div class="pairing-card">
+            <div class="pairing-status-row">
+              <div class="pairing-status-left">
+                <svg class="setting-svg-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+                  <path d="M1.42 9a16 16 0 0 1 21.16 0" />
+                  <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+                  <circle cx="12" cy="20" r="1" fill="currentColor" />
+                </svg>
+                <span class="pairing-status-label">Server Telemetry</span>
+              </div>
+              <div id="connection-status-badge" class="status-badge status-connected">
+                <span class="status-dot"></span>
+                <span id="connection-status-text">Connected</span>
+              </div>
+            </div>
+
+            <div class="pairing-divider"></div>
+
+            <div class="pairing-info-box">
+              <div class="pairing-info-header">
+                <svg class="setting-svg-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
+                  <line x1="12" y1="18" x2="12.01" y2="18" />
+                </svg>
+                <span>Mobile Sim Rig Companion</span>
+              </div>
+              <p class="pairing-info-text">Mount your phone or tablet on your sim rig and connect via Wi-Fi:</p>
+              <div class="pairing-url-container">
+                <span id="device-network-url" class="pairing-url-text">Loading pairing URL...</span>
+                <button id="btn-copy-url" class="copy-url-btn" title="Copy URL" aria-label="Copy Pairing URL">
+                  <svg class="setting-svg-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
+
+    <!-- Interactive Toast Notification -->
+    <div id="app-toast" class="toast-notification" aria-live="polite"></div>
   </div>
 
   <!-- Scripts -->
-  <script src="/js/audio-alerts.js?v=36"></script>
-  <script src="/js/interpolation.js?v=36"></script>
-  <script src="/js/map-renderer.js?v=36"></script>
-  <script src="/js/navigation-ui.js?v=36"></script>
-  <script src="/js/app.js?v=36"></script>
+  <script src="/js/audio-alerts.js?v=37"></script>
+  <script src="/js/interpolation.js?v=37"></script>
+  <script src="/js/map-renderer.js?v=37"></script>
+  <script src="/js/navigation-ui.js?v=37"></script>
+  <script src="/js/app.js?v=37"></script>
 </body>
 </html>

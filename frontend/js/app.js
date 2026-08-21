@@ -42,6 +42,7 @@ class App {
 
     this.ws.onopen = () => {
       console.log("Connected to Assetto Corsa GPS Server");
+      this.updateConnectionStatus(true);
     };
 
     this.ws.onmessage = (event) => {
@@ -60,13 +61,78 @@ class App {
 
     this.ws.onclose = () => {
       console.log("WebSocket disconnected, reconnecting in 2s...");
+      this.updateConnectionStatus(false, true);
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = setTimeout(() => this.connectWebSocket(), 2000);
     };
 
     this.ws.onerror = () => {
+      this.updateConnectionStatus(false);
       this.ws.close();
     };
+  }
+
+  updateConnectionStatus(connected, reconnecting = false) {
+    const badge = document.getElementById("connection-status-badge");
+    const text = document.getElementById("connection-status-text");
+    if (!badge || !text) return;
+
+    badge.className = "status-badge";
+    if (connected) {
+      badge.classList.add("status-connected");
+      text.innerText = "Connected";
+    } else if (reconnecting) {
+      badge.classList.add("status-connecting");
+      text.innerText = "Reconnecting...";
+    } else {
+      badge.classList.add("status-disconnected");
+      text.innerText = "Offline";
+    }
+  }
+
+  showToast(message) {
+    const toast = document.getElementById("app-toast");
+    if (!toast) return;
+    toast.innerText = message;
+    toast.classList.add("show");
+    clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => {
+      toast.classList.remove("show");
+    }, 2400);
+  }
+
+  async loadServerStatus() {
+    try {
+      const res = await fetch("/api/status");
+      if (res.ok) {
+        const data = await res.json();
+        const urlEl = document.getElementById("device-network-url");
+        if (urlEl) {
+          const port = window.location.port ? `:${window.location.port}` : "";
+          const ip = data.localIp || window.location.hostname;
+          urlEl.innerText = `http://${ip}${port}`;
+        }
+        if (data.mode) {
+          this.updateSegmentedActive("control-mode", "data-mode", data.mode);
+        }
+      }
+    } catch (e) {
+      const urlEl = document.getElementById("device-network-url");
+      if (urlEl) {
+        urlEl.innerText = window.location.origin;
+      }
+    }
+  }
+
+  updateSegmentedActive(containerId, attrName, activeValue) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const buttons = container.querySelectorAll(".segmented-btn");
+    buttons.forEach((btn) => {
+      const isMatch = btn.getAttribute(attrName) === activeValue;
+      btn.classList.toggle("active", isMatch);
+      btn.setAttribute("aria-checked", isMatch ? "true" : "false");
+    });
   }
 
   setupEventListeners() {
@@ -105,10 +171,6 @@ class App {
       });
     }
 
-
-
-
-
     // Fullscreen button
     const btnFullscreen = document.getElementById("btn-fullscreen");
     if (btnFullscreen) {
@@ -121,48 +183,131 @@ class App {
       });
     }
 
-    // Settings Modal
+    // Settings Modal / Bottom Sheet
     const btnSettings = document.getElementById("btn-settings");
     const modalSettings = document.getElementById("settings-modal");
     const btnCloseSettings = document.getElementById("close-settings");
 
-    if (btnSettings && modalSettings) {
-      btnSettings.addEventListener("click", () => {
-        modalSettings.style.display = "flex";
-      });
-    }
-    if (btnCloseSettings && modalSettings) {
-      btnCloseSettings.addEventListener("click", () => {
-        modalSettings.style.display = "none";
+    const openSettings = () => {
+      if (!modalSettings) return;
+      modalSettings.classList.add("open");
+      this.loadServerStatus();
+    };
+
+    const closeSettings = () => {
+      if (!modalSettings) return;
+      modalSettings.classList.remove("open");
+    };
+
+    if (btnSettings) btnSettings.addEventListener("click", openSettings);
+    if (btnCloseSettings) btnCloseSettings.addEventListener("click", closeSettings);
+
+    if (modalSettings) {
+      // Close on backdrop tap
+      modalSettings.addEventListener("click", (e) => {
+        if (e.target === modalSettings) {
+          closeSettings();
+        }
       });
     }
 
-    // Display Theme Selector (Dark / Light)
-    const themeSelect = document.getElementById("setting-theme");
-    if (themeSelect) {
-      themeSelect.value = this.renderer.theme || "dark";
-      themeSelect.addEventListener("change", (e) => {
-        this.renderer.setTheme(e.target.value);
+    // Close on Escape key
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && modalSettings && modalSettings.classList.contains("open")) {
+        closeSettings();
+      }
+    });
+
+    // 1. Display Theme Segmented Control (Night / Day)
+    const currentTheme = this.renderer.theme || "dark";
+    this.updateSegmentedActive("control-theme", "data-theme", currentTheme);
+    const themeButtons = document.querySelectorAll("#control-theme .segmented-btn");
+    themeButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const selectedTheme = btn.getAttribute("data-theme");
+        this.renderer.setTheme(selectedTheme);
+        this.updateSegmentedActive("control-theme", "data-theme", selectedTheme);
+      });
+    });
+
+    // 2. Speed Units Segmented Control (KM/H / MPH)
+    const currentUnit = this.ui.speedUnit || "kmh";
+    this.updateSegmentedActive("control-units", "data-unit", currentUnit);
+    const unitButtons = document.querySelectorAll("#control-units .segmented-btn");
+    unitButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const selectedUnit = btn.getAttribute("data-unit");
+        this.ui.setUnit(selectedUnit);
+        this.updateSegmentedActive("control-units", "data-unit", selectedUnit);
+      });
+    });
+
+    // 3. Audio Alerts Toggle
+    const toggleAudio = document.getElementById("toggle-audio-alerts");
+    if (toggleAudio) {
+      toggleAudio.checked = this.audio.enabled;
+      toggleAudio.addEventListener("change", (e) => {
+        this.audio.setSound(e.target.checked);
+        if (e.target.checked) {
+          this.audio.playPoiChime();
+        }
       });
     }
 
-    // Unit Selector (kmh / mph)
-    const unitSelect = document.getElementById("setting-units");
-    if (unitSelect) {
-      unitSelect.addEventListener("change", (e) => {
-        this.ui.setUnit(e.target.value);
+    // 4. Dynamic Auto-Zoom Toggle
+    const toggleAutoZoom = document.getElementById("toggle-auto-zoom");
+    if (toggleAutoZoom) {
+      toggleAutoZoom.checked = this.renderer.autoZoomEnabled;
+      toggleAutoZoom.addEventListener("change", (e) => {
+        this.renderer.setAutoZoom(e.target.checked);
       });
     }
 
-    // Mode Selector (auto / live / mock)
-    const modeSelect = document.getElementById("setting-mode");
-    if (modeSelect) {
-      modeSelect.addEventListener("change", (e) => {
+    // 5. Telemetry Mode Segmented Control (Auto / Live / Mock)
+    const modeButtons = document.querySelectorAll("#control-mode .segmented-btn");
+    modeButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const selectedMode = btn.getAttribute("data-mode");
+        this.updateSegmentedActive("control-mode", "data-mode", selectedMode);
         fetch("/api/mode", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: e.target.value }),
+          body: JSON.stringify({ mode: selectedMode }),
         }).catch(() => {});
+      });
+    });
+
+    // 6. Reset Session Action Button
+    const btnReset = document.getElementById("btn-reset-session");
+    if (btnReset) {
+      btnReset.addEventListener("click", async () => {
+        try {
+          btnReset.style.opacity = "0.6";
+          const res = await fetch("/api/reset", { method: "POST" });
+          if (res.ok) {
+            this.showToast("Trip stats & simulator reset!");
+          }
+        } catch (e) {
+          console.warn("Reset error", e);
+        } finally {
+          btnReset.style.opacity = "1";
+        }
+      });
+    }
+
+    // 7. Copy Pairing URL Button
+    const btnCopyUrl = document.getElementById("btn-copy-url");
+    if (btnCopyUrl) {
+      btnCopyUrl.addEventListener("click", async () => {
+        const urlText = document.getElementById("device-network-url")?.innerText;
+        if (urlText && navigator.clipboard) {
+          try {
+            await navigator.clipboard.writeText(urlText);
+            this.showToast("Pairing URL copied to clipboard!");
+          } catch (e) {
+            this.showToast("URL: " + urlText);
+          }
+        }
       });
     }
 
@@ -183,3 +328,4 @@ class App {
 window.addEventListener("DOMContentLoaded", () => {
   window.app = new App();
 });
+

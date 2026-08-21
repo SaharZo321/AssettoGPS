@@ -5,7 +5,7 @@
 class AudioAlertManager {
   constructor() {
     this.ctx = null;
-    this.enabled = true;
+    this.enabled = localStorage.getItem("gps_audio_alerts") !== "false";
     this.lastAlertTime = 0;
     this.initAudioContext();
   }
@@ -27,10 +27,17 @@ class AudioAlertManager {
     }
   }
 
-  toggleSound() {
-    this.enabled = !this.enabled;
-    this.unlock();
+  setSound(enabled) {
+    this.enabled = !!enabled;
+    localStorage.setItem("gps_audio_alerts", this.enabled ? "true" : "false");
+    if (this.enabled) {
+      this.unlock();
+    }
     return this.enabled;
+  }
+
+  toggleSound() {
+    return this.setSound(!this.enabled);
   }
 
   /**

@@ -29,7 +29,7 @@ class MapRenderer {
     // Camera settings
     this.orientationMode = "headingUp"; // "headingUp" or "northUp"
     this.manualZoom = 1.0;
-    this.autoZoomEnabled = true;
+    this.autoZoomEnabled = localStorage.getItem("gps_auto_zoom") !== "false";
 
     // Free-Browsing & Pan State (Waze Style)
     this.manualPanOffset = { u: 0, v: 0 };
@@ -360,9 +360,14 @@ class MapRenderer {
     }
   }
 
-  toggleAutoZoom() {
-    this.autoZoomEnabled = !this.autoZoomEnabled;
+  setAutoZoom(enabled) {
+    this.autoZoomEnabled = !!enabled;
+    localStorage.setItem("gps_auto_zoom", this.autoZoomEnabled ? "true" : "false");
     return this.autoZoomEnabled;
+  }
+
+  toggleAutoZoom() {
+    return this.setAutoZoom(!this.autoZoomEnabled);
   }
 
   /**
