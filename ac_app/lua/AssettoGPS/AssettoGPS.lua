@@ -31,12 +31,11 @@ local function checkServerStatus(callback)
   end)
 end
 
--- Start server in background
+-- Start server in background via silent detached launcher
 local function startServer()
   manually_stopped = false
   server_running = true
-  local cmd = 'cd /d "' .. server_dir .. '" && start "" /B "%USERPROFILE%\\.local\\bin\\uv.exe" run backend\\server.py'
-  os.execute(cmd)
+  os.execute('wscript.exe "' .. server_dir .. '\\backend\\start_silent.vbs"')
   setTimeout(function()
     checkServerStatus()
   end, 1.5)
