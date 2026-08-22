@@ -76,6 +76,7 @@ class MockTelemetryTests(unittest.TestCase):
         lane_asset = (
             server.FRONTEND_DIR / "assets" / "maps" / "srp-traffic-lanes.geojson"
         )
+        lane_data = json.loads(lane_asset.read_text(encoding="utf-8"))
         with mock.patch.object(mock_telemetry.time, "time", return_value=1_000.0):
             generator = mock_telemetry.MockTelemetryGenerator(lane_asset)
         with mock.patch.object(mock_telemetry.time, "time", return_value=1_020.0):
@@ -89,6 +90,19 @@ class MockTelemetryTests(unittest.TestCase):
         )
         self.assertEqual(len(frame["carPosition"]), 3)
         self.assertTrue(all(math.isfinite(value) for value in frame["carPosition"]))
+        longitude, latitude, _ = lane_data["mockRoute"][0]
+        coordinate_space = lane_data["coordinateSpace"]
+        origin_longitude, origin_latitude = coordinate_space["origin"]
+        self.assertAlmostEqual(
+            generator.native_route[0][0],
+            (longitude - origin_longitude)
+            * coordinate_space["metersPerLongitudeDegree"],
+        )
+        self.assertAlmostEqual(
+            generator.native_route[0][2],
+            (origin_latitude - latitude)
+            * coordinate_space["metersPerLatitudeDegree"],
+        )
 
 
 class ControlEndpointTests(unittest.TestCase):
@@ -202,6 +216,8 @@ class SrpVectorMapTests(unittest.TestCase):
 
         self.assertEqual(roads["type"], "FeatureCollection")
         self.assertEqual(roads["coordinateSpace"]["type"], "srp-local-mercator")
+        self.assertEqual(roads["coordinateSpace"]["longitudeAxis"], "+x")
+        self.assertEqual(roads["coordinateSpace"]["latitudeAxis"], "-z")
         self.assertEqual(roads["statistics"]["laneCount"], 593)
         self.assertGreater(roads["statistics"]["pointCount"], 17_000)
         self.assertEqual(roads["statistics"]["sourcePointCount"], 17_280)
@@ -230,6 +246,9 @@ class SrpVectorMapTests(unittest.TestCase):
 
         self.assertIn("class SrpGameProjection", renderer)
         self.assertIn("srp-traffic-lanes.geojson", renderer)
+        self.assertIn(
+            "this.origin[1] - z / this.metersPerLatitudeDegree", renderer
+        )
         self.assertNotIn("srp-osm-calibration.json", renderer)
         self.assertNotIn("SrpCoordinateCalibration", renderer)
 

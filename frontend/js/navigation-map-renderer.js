@@ -12,12 +12,18 @@ class SrpGameProjection {
     if (!this.metersPerLongitudeDegree || !this.metersPerLatitudeDegree) {
       throw new Error('SRP lane projection metadata is invalid');
     }
+    if (config.longitudeAxis && config.longitudeAxis !== "+x") {
+      throw new Error('SRP lane projection must map +X east');
+    }
+    if (config.latitudeAxis && config.latitudeAxis !== "-z") {
+      throw new Error('SRP lane projection must map -Z north');
+    }
   }
 
   toLngLat(x, z) {
     return [
       this.origin[0] + x / this.metersPerLongitudeDegree,
-      this.origin[1] + z / this.metersPerLatitudeDegree,
+      this.origin[1] - z / this.metersPerLatitudeDegree,
     ];
   }
 

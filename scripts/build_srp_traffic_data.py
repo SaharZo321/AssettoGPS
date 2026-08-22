@@ -56,7 +56,7 @@ DESTINATIONS = [
 def game_to_lng_lat(x: float, z: float) -> list[float]:
     return [
         ORIGIN_LONGITUDE + x / METERS_PER_LONGITUDE_DEGREE,
-        ORIGIN_LATITUDE + z / METERS_PER_LATITUDE_DEGREE,
+        ORIGIN_LATITUDE - z / METERS_PER_LATITUDE_DEGREE,
     ]
 
 
@@ -475,6 +475,8 @@ def convert_traffic_plan(data: dict[str, Any]) -> dict[str, Any]:
             "origin": [ORIGIN_LONGITUDE, ORIGIN_LATITUDE],
             "metersPerLongitudeDegree": METERS_PER_LONGITUDE_DEGREE,
             "metersPerLatitudeDegree": METERS_PER_LATITUDE_DEGREE,
+            "longitudeAxis": "+x",
+            "latitudeAxis": "-z",
         },
         "boundsAc": [min(all_x), min(all_z), max(all_x), max(all_z)],
         "destinations": DESTINATIONS,

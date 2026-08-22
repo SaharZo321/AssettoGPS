@@ -71,6 +71,10 @@ class MockTelemetryGenerator:
             return []
         data = json.loads(lane_asset_path.read_text(encoding='utf-8'))
         coordinate_space = data['coordinateSpace']
+        if coordinate_space.get('longitudeAxis', '+x') != '+x':
+            raise ValueError('SRP lane projection must map +X east')
+        if coordinate_space.get('latitudeAxis', '-z') != '-z':
+            raise ValueError('SRP lane projection must map -Z north')
         origin_longitude, origin_latitude = coordinate_space['origin']
         longitude_scale = coordinate_space['metersPerLongitudeDegree']
         latitude_scale = coordinate_space['metersPerLatitudeDegree']
@@ -87,7 +91,7 @@ class MockTelemetryGenerator:
             point = (
                 (longitude - origin_longitude) * longitude_scale,
                 elevation,
-                (latitude - origin_latitude) * latitude_scale,
+                (origin_latitude - latitude) * latitude_scale,
             )
             if not route or math.hypot(
                 point[0] - route[-1][0], point[2] - route[-1][2]

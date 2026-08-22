@@ -6,7 +6,9 @@
   directed lanes retain Assetto Corsa elevation and use a linear private map
   projection. Telemetry uses that same projection, so there is no OSM warp,
   calibration, or marker snapping. CSP Traffic Planner intersection polygons
-  are converted into directed lane transitions for local landmark routing.
+  are converted into directed lane transitions for local landmark routing. The
+  coordinate convention is explicit: game +X is east/right and game +Z is
+  south/down, so geographic latitude increases along game -Z.
 - `srp-osm-roads.geojson` and `srp-osm-calibration.json` are retained as the
   earlier geographic experiment. They are not loaded by Game Navigation.
 
