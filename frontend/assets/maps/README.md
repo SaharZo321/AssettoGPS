@@ -1,8 +1,6 @@
 # SRP map assets
 
-- `srp.svg` is the exact, lightweight Simple Map. It is the default and has no
-  turn-by-turn navigation capability.
-- `srp-traffic-lanes.geojson` is the prototype MapLibre Navigation Map. Its 593
+- `srp-traffic-lanes.geojson` is the offline MapLibre Navigation Map. Its 593
   directed lanes retain Assetto Corsa elevation and use a linear private map
   projection. Telemetry uses that same projection, so there is no OSM warp,
   calibration, or marker snapping. CSP Traffic Planner intersection polygons

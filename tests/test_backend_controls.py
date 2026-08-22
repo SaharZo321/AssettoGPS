@@ -4,7 +4,6 @@ import math
 import sys
 import unittest
 import uuid
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest import mock
 
@@ -190,24 +189,6 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertAlmostEqual(track["xOffset"], 11119.814453125)
         self.assertAlmostEqual(track["zOffset"], 10454.576171875)
 
-    def test_bundled_srp_map_is_real_vector_geometry(self):
-        root = ET.parse(server.SRP_MAP_PATH).getroot()
-        namespace = {"svg": "http://www.w3.org/2000/svg"}
-        roads = root.find("svg:path[@id='roads']", namespace)
-
-        self.assertEqual(root.attrib["viewBox"], "0 0 5544 8192")
-        self.assertIsNotNone(roads)
-        self.assertGreater(roads.attrib["d"].count("Q"), 2_000)
-        self.assertIsNone(root.find("svg:image", namespace))
-
-    def test_srp_map_endpoint_prefers_svg_over_installed_png(self):
-        response = asyncio.run(
-            server.get_track_map_image("shutoko_revival_project_beta")
-        )
-
-        self.assertEqual(response.media_type, "image/svg+xml")
-        self.assertEqual(Path(response.path), server.SRP_MAP_PATH)
-
     def test_offline_navigation_map_preserves_native_directed_lanes(self):
         lanes_path = (
             server.FRONTEND_DIR / "assets" / "maps" / "srp-traffic-lanes.geojson"
@@ -252,18 +233,21 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertNotIn("srp-osm-calibration.json", renderer)
         self.assertNotIn("SrpCoordinateCalibration", renderer)
 
-    def test_frontend_exposes_both_map_modes_and_local_maplibre(self):
+    def test_frontend_is_navigation_only_and_uses_local_maplibre(self):
         index = (server.FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
-        controller = (server.FRONTEND_DIR / "js" / "map-mode-controller.js").read_text(
+        controller = (server.FRONTEND_DIR / "js" / "navigation-controller.js").read_text(
             encoding="utf-8"
         )
-        self.assertIn('data-map-mode="simple"', index)
-        self.assertIn('data-map-mode="navigation"', index)
-        self.assertIn("Game Navigation", index)
         self.assertIn('id="navigation-destination"', index)
         self.assertIn('id="btn-start-route"', index)
         self.assertIn('/vendor/maplibre-gl/maplibre-gl.js', index)
-        self.assertIn('localStorage.getItem("gps_map_mode")', controller)
+        self.assertIn("class NavigationController", controller)
+        self.assertNotIn("Simple Map", index)
+        self.assertNotIn('id="map-canvas"', index)
+        self.assertNotIn('/js/map-renderer.js', index)
+        self.assertNotIn('/js/map-mode-controller.js', index)
+        self.assertFalse((server.FRONTEND_DIR / "js" / "map-renderer.js").exists())
+        self.assertFalse((server.FRONTEND_DIR / "assets" / "maps" / "srp.svg").exists())
 
     def test_navigation_map_includes_directed_route_planning(self):
         renderer = (
@@ -289,21 +273,18 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertIn("redrawRemainingRoute", renderer)
         self.assertIn("recalculateRoute", renderer)
         self.assertIn("routeRecalculationDelayMs = 1800", renderer)
-        self.assertIn("this.updateRouteProgress(routeMatches)", renderer)
+        self.assertIn("this.updateRouteProgress(routeMatches, false, routeNow)", renderer)
+        self.assertIn("routeNow - this.lastRouteProgressUpdate >= 300", renderer)
         self.assertNotIn("this.updateRouteProgress(this.lastMarkerPoint)", renderer)
 
     def test_recenter_button_targets_the_active_map_mode(self):
         app = (server.FRONTEND_DIR / "js" / "app.js").read_text(encoding="utf-8")
-        simple = (
-            server.FRONTEND_DIR / "js" / "map-renderer.js"
-        ).read_text(encoding="utf-8")
         navigation = (
             server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
         ).read_text(encoding="utf-8")
 
         self.assertIn('getElementById("btn-recenter")', app)
         self.assertIn('addEventListener("click", () => this.renderer.recenter())', app)
-        self.assertNotIn('addEventListener("click", () => this.recenter())', simple)
         self.assertIn('center: this.displayPoint', navigation)
         self.assertIn('this.orientationMode === "headingUp" ? this.displayBearing : 0', navigation)
 
@@ -318,6 +299,29 @@ class SrpVectorMapTests(unittest.TestCase):
             renderer.count("padding: this.getTrackingPadding()"),
             2,
         )
+
+    def test_navigation_only_view_settings_are_persisted(self):
+        renderer = (
+            server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('localStorage.setItem("gps_3d_tilt"', renderer)
+        self.assertIn('localStorage.setItem("gps_auto_zoom"', renderer)
+
+    def test_navigation_is_gated_to_srp_and_route_matching_is_local(self):
+        renderer = (
+            server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
+        ).read_text(encoding="utf-8")
+        controller = (
+            server.FRONTEND_DIR / "js" / "navigation-controller.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('this.trackSupported = this.trackInfo.isSRP', renderer)
+        self.assertIn('this.trackSupported === false', renderer)
+        self.assertIn('primary.distance + 12', renderer)
+        self.assertIn('primary.score + 20', renderer)
+        self.assertIn('if (matches?.length) this.recalculateRoute(now)', renderer)
+        self.assertIn('document.documentElement.getAttribute("data-theme")', controller)
 
     def test_navigation_auto_zoom_is_twenty_five_percent_closer(self):
         renderer = (

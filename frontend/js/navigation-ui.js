@@ -5,7 +5,6 @@
 class NavigationUI {
   constructor() {
     this.speedUnit = localStorage.getItem("gps_speed_unit") || "kmh"; // "kmh" or "mph"
-    this.mapMode = localStorage.getItem("gps_map_mode") === "navigation" ? "navigation" : "simple";
     this.mapCapabilities = { routing: false, activeRoute: false, mapMatching: false, directionDetection: false };
 
     // DOM cache
@@ -37,8 +36,7 @@ class NavigationUI {
     }
   }
 
-  setMapCapabilities(capabilities = {}, mode = "simple") {
-    this.mapMode = mode === "navigation" ? "navigation" : "simple";
+  setMapCapabilities(capabilities = {}) {
     this.mapCapabilities = {
       routing: capabilities.routing === true,
       activeRoute: capabilities.activeRoute === true,
@@ -83,12 +81,8 @@ class NavigationUI {
       }
     }
 
-    // Do not advertise turn-by-turn navigation when the active renderer does
-    // not provide it. POI and tunnel alerts remain useful in either mode.
     if ((instruction.alertLevel || "normal") === "normal") {
-      if (this.mapMode !== "navigation") {
-        subtitle = "Simple map - navigation unavailable";
-      } else if (this.mapCapabilities.activeRoute) {
+      if (this.mapCapabilities.activeRoute) {
         subtitle = "Game-lane route active";
       } else if (this.mapCapabilities.routing) {
         subtitle = "Game-aligned lanes - choose a destination";

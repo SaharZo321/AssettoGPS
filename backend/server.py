@@ -16,9 +16,8 @@ from pathlib import Path
 from typing import Set, Dict, Any, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, Response
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 
 from ac_shared_memory import AssettoCorsaSharedMemory, ac_shared_memory_available
 from ac_track_finder import ACTrackFinder
@@ -31,7 +30,6 @@ if getattr(sys, "frozen", False):
 else:
     RUNTIME_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = RUNTIME_ROOT / "frontend"
-SRP_MAP_PATH = FRONTEND_DIR / "assets" / "maps" / "srp.svg"
 
 app = FastAPI(title="Assetto Corsa GPS Minimap Server")
 
@@ -250,64 +248,6 @@ async def get_track_data():
     config = server_state["currentConfig"]
     track_info = track_finder.get_track_info(track_name, config)
     return track_info
-
-
-@app.get("/api/track/map")
-@app.get("/api/track/map.png")
-async def get_track_map_image(track: Optional[str] = None):
-    """Serve the bundled SRP vector map, an installed PNG, or a fallback."""
-    track_name = track or server_state["currentTrack"] or "shutoko_revival_project_beta"
-    config = server_state["currentConfig"]
-    track_info = track_finder.get_track_info(track_name, config)
-
-    if track_info.get("isSRP") and SRP_MAP_PATH.is_file():
-        return FileResponse(str(SRP_MAP_PATH), media_type="image/svg+xml")
-
-    if track_info.get("hasMapImage") and track_info.get("mapImagePath"):
-        img_path = Path(track_info["mapImagePath"])
-        if img_path.exists():
-            return FileResponse(str(img_path), media_type="image/png")
-
-    # Generate a clean dark vector road map image
-    from io import BytesIO
-    from PIL import Image, ImageDraw
-
-    img = Image.new("RGBA", (1024, 1024), (11, 15, 25, 255))
-    draw = ImageDraw.Draw(img)
-
-    # Grid background
-    grid_color = (25, 33, 50, 255)
-    for x in range(0, 1024, 64):
-        draw.line([(x, 0), (x, 1024)], fill=grid_color, width=1)
-    for y in range(0, 1024, 64):
-        draw.line([(0, y), (1024, y)], fill=grid_color, width=1)
-
-    # Draw simulated Tokyo Expressway road loops
-    scale = track_info.get("scaleFactor", 0.08)
-    x_off = track_info.get("xOffset", 512.0)
-    z_off = track_info.get("zOffset", 512.0)
-
-    road_glow = (2, 132, 199, 120)
-    road_core = (56, 189, 248, 240)
-
-    wps = mock_gen.waypoints
-    for i in range(len(wps) - 1):
-        p1 = wps[i]
-        p2 = wps[i + 1]
-        u1 = p1[0] * scale + x_off
-        v1 = p1[1] * scale + z_off
-        u2 = p2[0] * scale + x_off
-        v2 = p2[1] * scale + z_off
-
-        # Glow layer
-        draw.line([(u1, v1), (u2, v2)], fill=road_glow, width=16)
-        # Main asphalt/neon lane
-        draw.line([(u1, v1), (u2, v2)], fill=road_core, width=8)
-
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    return Response(content=buf.getvalue(), media_type="image/png")
 
 
 @app.post("/api/mode")

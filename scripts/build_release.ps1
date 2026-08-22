@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "0.2.0-beta.15",
+    [string]$Version = "0.2.0-beta.16",
     [switch]$SkipTests
 )
 
@@ -21,6 +21,11 @@ if (-not $stageRoot.StartsWith($repoRoot, [System.StringComparison]::OrdinalIgno
 
 Push-Location $repoRoot
 try {
+    uv sync --group build --locked
+    if ($LASTEXITCODE -ne 0) {
+        throw "Dependency synchronization failed."
+    }
+
     if (-not $SkipTests) {
         uv run --group build python -m unittest discover -s tests -v
         if ($LASTEXITCODE -ne 0) {

@@ -93,7 +93,7 @@ Relevant upstream documentation:
 - Real-time AC shared-memory telemetry over WebSockets
 - Browser UI for phones, tablets, and secondary displays
 - Heading-up and north-up map modes
-- Selectable exact Simple SVG Map or fully local MapLibre Game Navigation
+- Fully local MapLibre Game Navigation aligned to SRP's native coordinates
 - Native SRP traffic-lane direction detection and directed landmark routing
 - SRP points of interest, junction guidance, and speed-camera warnings
 - Day/night display behavior and headlight synchronization
@@ -116,7 +116,7 @@ Build and test the drag-and-drop Content Manager ZIP on Windows:
 
     ./scripts/build_release.ps1
 
-The output is build/AssettoGPS-0.2.0-beta.15.zip. The build script is only for
+The output is build/AssettoGPS-0.2.0-beta.16.zip. The build script is only for
 project maintainers; players install the resulting ZIP directly through Content
 Manager.
 

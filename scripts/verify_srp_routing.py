@@ -132,7 +132,20 @@ class RoutingAudit:
                 "score": score,
             }
             candidates.append(candidate)
-        return sorted(candidates, key=lambda item: item["score"])
+        candidates.sort(key=lambda item: item["score"])
+        if not candidates:
+            return []
+        primary = candidates[0]
+        return [
+            candidate
+            for candidate in candidates
+            if candidate["distance"] <= min(45, primary["distance"] + 12)
+            and candidate["score"] <= primary["score"] + 20
+            and candidate["elevation_difference"]
+            <= min(12, primary["elevation_difference"] + 3)
+            and candidate["direction_difference"]
+            <= primary["direction_difference"] + 20
+        ]
 
     def plan_route(self, point, bearing: float, elevation: float, destination):
         best = None
@@ -262,6 +275,11 @@ class RoutingAudit:
         if golden_plan is None:
             raise AssertionError("Shibuya has no heading/elevation-compatible route origin")
         start = golden_plan["match"]
+        local_starts = self.route_candidates(
+            SHIBUYA_TAKIGICHO,
+            SHIBUYA_HEADING,
+            SHIBUYA_TAKIGICHO[2],
+        )
         destination_results = {}
         for destination in self.data["destinations"]:
             plan = self.plan_route(
@@ -286,11 +304,21 @@ class RoutingAudit:
             raise AssertionError(f"connector endpoints missing from lanes: {missing_connector_points[:5]}")
         if start["lane"] != 271:
             raise AssertionError(f"Shibuya route origin regressed to lane {start['lane']}, expected 271")
+        if not local_starts or local_starts[0]["lane"] != 269:
+            raise AssertionError(f"Shibuya primary directed match regressed: {local_starts[:1]}")
+        if any(item["distance"] > 45 for item in local_starts):
+            raise AssertionError(f"route starts escaped the local carriageway band: {local_starts}")
         if golden is None or not 8000 <= golden["distance_m"] <= 9000:
             raise AssertionError(f"unexpected Shibuya to Yoyogi route: {golden}")
         for transition in ((271, 264), (443, 454), (456, 458)):
             if transition not in golden["transitions"]:
                 raise AssertionError(f"golden route is missing transition {transition}")
+        if station is None or not 11000 <= station["distance_m"] <= 12500:
+            raise AssertionError(f"unexpected Shibuya to Shinjuku route: {station}")
+        if station["destination_snap_m"] > 20:
+            raise AssertionError(f"Shinjuku destination snap regressed: {station}")
+        if (443, 454) not in station["transitions"]:
+            raise AssertionError("Shibuya to Shinjuku route is missing transition (443, 454)")
         unreachable = [name for name, distance in destination_results.items() if distance is None]
         if unreachable:
             raise AssertionError(f"destinations unreachable from Shibuya: {unreachable}")

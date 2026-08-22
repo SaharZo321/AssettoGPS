@@ -8,12 +8,19 @@ class App {
     this.reconnectTimer = null;
     this.wakeLock = null;
 
-    this.renderer = new MapModeController("map-canvas", "navigation-map");
+    this.renderer = new NavigationController("navigation-map");
     this.interpolator = window.motionInterpolator;
     this.ui = window.navUI;
     this.audio = window.audioAlerts;
 
     this.setupEventListeners();
+    this.renderer.readyPromise
+      .then(() => this.updateNavigationUi())
+      .catch((error) => {
+        console.error("Navigation Map failed to initialize", error);
+        this.updateNavigationUi(error.message || String(error));
+        this.showToast("Navigation Map could not start.");
+      });
     this.requestWakeLock();
     this.connectWebSocket();
     this.startLoop();
@@ -43,6 +50,7 @@ class App {
     this.ws.onopen = () => {
       console.log("Connected to Assetto Corsa GPS Server");
       this.updateConnectionStatus(true);
+      this.updateServerOfflineNotice(false);
     };
 
     this.ws.onmessage = (event) => {
@@ -52,7 +60,8 @@ class App {
         this.ui.update(frame);
 
         if (frame.trackInfo) {
-          this.renderer.setTrackInfo(frame.trackInfo, frame.track);
+          const supportChanged = this.renderer.setTrackInfo(frame.trackInfo, frame.track);
+          if (supportChanged) this.updateNavigationUi();
         }
 
         if (frame.environment) {
@@ -66,13 +75,15 @@ class App {
 
     this.ws.onclose = () => {
       console.log("WebSocket disconnected, reconnecting in 2s...");
-      this.updateConnectionStatus(false, true);
+      this.updateConnectionStatus(false);
+      this.updateServerOfflineNotice(true);
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = setTimeout(() => this.connectWebSocket(), 2000);
     };
 
     this.ws.onerror = () => {
       this.updateConnectionStatus(false);
+      this.updateServerOfflineNotice(true);
       this.ws.close();
     };
   }
@@ -91,8 +102,15 @@ class App {
       text.innerText = "Reconnecting...";
     } else {
       badge.classList.add("status-disconnected");
-      text.innerText = "Offline";
+      text.innerText = "Server not running";
     }
+  }
+
+  updateServerOfflineNotice(visible) {
+    const notice = document.getElementById("server-offline-notice");
+    if (!notice) return;
+    notice.classList.toggle("visible", visible);
+    notice.setAttribute("aria-hidden", visible ? "false" : "true");
   }
 
   showToast(message) {
@@ -148,32 +166,24 @@ class App {
     });
   }
 
-  updateMapModeUi(detail = {}) {
-    const mode = detail.mode || this.renderer.mapMode || "simple";
-    const capabilities = detail.capabilities || this.renderer.capabilities;
-    const error = detail.error || null;
-    this.updateSegmentedActive("control-map-mode", "data-map-mode", mode);
-
-    const note = document.getElementById("map-mode-note");
-    if (note) {
-      note.classList.toggle("navigation-ready", mode === "navigation" && !error);
-      note.classList.toggle("map-mode-error", !!error);
-      if (error) {
-        note.innerText = `Navigation Map could not start (${error}). Simple Map was restored.`;
-      } else if (mode === "navigation") {
-        note.innerText = "Native SRP lanes, elevation-aware direction detection, and directed routing are active.";
-      } else {
-        note.innerText = "Exact offline SVG map. Route guidance is unavailable in Simple Map mode.";
-      }
-    }
-
+  updateNavigationUi(error = null) {
+    const capabilities = this.renderer.capabilities;
     if (this.ui && typeof this.ui.setMapCapabilities === "function") {
-      this.ui.setMapCapabilities(capabilities, mode);
+      this.ui.setMapCapabilities(capabilities);
     }
-
-    const routeControls = document.getElementById("navigation-route-controls");
-    if (routeControls) routeControls.hidden = mode !== "navigation" || !capabilities.routing;
-    if (mode === "navigation" && capabilities.routing) this.populateRouteDestinations();
+    if (capabilities.routing) {
+      this.populateRouteDestinations();
+      if (!capabilities.activeRoute) this.updateRouteUi();
+    } else {
+      const select = document.getElementById("navigation-destination");
+      if (select) select.replaceChildren(new Option("Choose a destination...", ""));
+      const startButton = document.getElementById("btn-start-route");
+      if (startButton) startButton.disabled = true;
+    }
+    if (capabilities.unsupportedTrack) {
+      this.updateRouteUi({ error: "Route guidance is available on SRP tracks only." });
+    }
+    if (error) this.updateRouteUi({ error: `Navigation Map could not start (${error}).` });
   }
 
   populateRouteDestinations() {
@@ -211,8 +221,7 @@ class App {
   }
 
   setupEventListeners() {
-    // Recenter belongs to the active map mode. Binding it inside the SVG
-    // renderer made the same button reset the hidden map in Navigation mode.
+    // Recenter the MapLibre camera after manual pan or rotation.
     const btnRecenter = document.getElementById("btn-recenter");
     if (btnRecenter) {
       btnRecenter.addEventListener("click", () => this.renderer.recenter());
@@ -307,37 +316,12 @@ class App {
       }
     });
 
-    // Map Mode: exact SVG Simple Map or game-native lane Navigation Map.
-    this.updateMapModeUi({ mode: this.renderer.mapMode, capabilities: this.renderer.capabilities });
-    window.addEventListener("gps-map-mode-changed", (event) => {
-      this.updateMapModeUi(event.detail || {});
-      if (event.detail?.error) this.showToast("Navigation Map unavailable; Simple Map restored.");
-    });
+    this.updateNavigationUi();
     window.addEventListener("gps-navigation-route-changed", (event) => {
       this.updateRouteUi(event.detail || {});
       if (this.ui && typeof this.ui.setMapCapabilities === "function") {
-        this.ui.setMapCapabilities(this.renderer.capabilities, this.renderer.mapMode);
+        this.ui.setMapCapabilities(this.renderer.capabilities);
       }
-    });
-    const mapModeButtons = document.querySelectorAll("#control-map-mode .segmented-btn");
-    mapModeButtons.forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const selectedMode = btn.getAttribute("data-map-mode");
-        if (selectedMode === this.renderer.mapMode) return;
-        mapModeButtons.forEach((button) => {
-          button.disabled = true;
-          button.setAttribute("aria-busy", "true");
-        });
-        if (selectedMode === "navigation") this.showToast("Loading offline Navigation Map...");
-        try {
-          await this.renderer.setMapMode(selectedMode);
-        } finally {
-          mapModeButtons.forEach((button) => {
-            button.disabled = false;
-            button.removeAttribute("aria-busy");
-          });
-        }
-      });
     });
 
     const destinationSelect = document.getElementById("navigation-destination");

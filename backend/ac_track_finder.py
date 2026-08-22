@@ -178,8 +178,8 @@ SRP_POIS = [
 ]
 
 # All SRP 0.9.3 layouts use this Comfy Map coordinate space. Keeping the
-# calibration in the app means the bundled vector map remains aligned even if
-# an installation is missing a layout-specific map.ini or map.png.
+# calibration keeps the navigation projection aligned even if an installation
+# is missing a layout-specific map.ini.
 SRP_MAP_CALIBRATION = {
     "mapWidth": 5544.0,
     "mapHeight": 8192.0,
@@ -192,7 +192,7 @@ SRP_MAP_CALIBRATION = {
 
 
 class ACTrackFinder:
-    """Finds and parses Assetto Corsa track files, map.ini, and map.png"""
+    """Finds Assetto Corsa tracks and parses map.ini calibration data."""
 
     def __init__(self, custom_ac_path: Optional[str] = None):
         self.ac_root = self.find_ac_root(custom_ac_path)
@@ -311,7 +311,7 @@ class ACTrackFinder:
         return None
 
     def get_track_info(self, track_name: str, config: Optional[str] = None) -> Dict[str, Any]:
-        """Retrieves map.ini parameters, map image path, and POIs for a track"""
+        """Retrieves map.ini calibration parameters and POIs for a track."""
         track_key = f"{track_name}_{config or ''}"
         if track_key in self.cached_track_data:
             return self.cached_track_data[track_key]
@@ -336,8 +336,6 @@ class ACTrackFinder:
             "trackName": track_name,
             "trackConfig": config or "",
             "isSRP": is_srp,
-            "hasMapImage": False,
-            "mapImagePath": None,
             **calibration,
             "pois": SRP_POIS if is_srp else [],
         }
@@ -371,30 +369,12 @@ class ACTrackFinder:
         ini_candidates.append(track_dir / "data" / "map.ini")
         ini_candidates.append(track_dir / "map.ini")
 
-        # Collect map.png candidates (prefer clean map.png over map_mini.png)
-        png_candidates = []
-        for l in layout_candidates:
-            l_dir = track_dir / l
-            if l_dir.exists():
-                png_candidates.append(l_dir / "map.png")
-                png_candidates.append(l_dir / "map_mini.png")
-                png_candidates.append(l_dir / "ui" / "outline.png")
-                png_candidates.append(l_dir / "ui" / "map.png")
-
-        png_candidates.append(track_dir / "map.png")
-        png_candidates.append(track_dir / "map_mini.png")
-        png_candidates.append(track_dir / "ui" / "outline.png")
-        png_candidates.append(track_dir / "ui" / "map.png")
-        png_candidates.append(track_dir / "data" / "map.png")
-
-        # Also search subdirectories of track_dir if still not found
+        # Also search layout subdirectories for map.ini.
         for sub in track_dir.iterdir():
             if sub.is_dir():
-                png_candidates.append(sub / "map.png")
                 ini_candidates.append(sub / "data" / "map.ini")
 
-        # 1. Parse map.ini
-        found_ini = False
+        # Parse the first available map.ini.
         for ini_path in ini_candidates:
             if ini_path.exists():
                 try:
@@ -409,24 +389,9 @@ class ACTrackFinder:
                         track_data["zOffset"] = float(cp.get(section, "Z_OFFSET", fallback=0.0))
                         track_data["margin"] = float(cp.get(section, "MARGIN", fallback=0.0))
                         track_data["drawingSize"] = float(cp.get(section, "DRAWING_SIZE", fallback=10.0))
-                        found_ini = True
                         break
                 except Exception:
                     pass
-
-        # 2. Find map.png
-        for png_path in png_candidates:
-            if png_path.exists():
-                track_data["hasMapImage"] = True
-                track_data["mapImagePath"] = str(png_path)
-                try:
-                    from PIL import Image
-                    with Image.open(png_path) as im:
-                        track_data["mapWidth"] = float(im.width)
-                        track_data["mapHeight"] = float(im.height)
-                except Exception:
-                    pass
-                break
 
         self.cached_track_data[track_key] = track_data
         return track_data

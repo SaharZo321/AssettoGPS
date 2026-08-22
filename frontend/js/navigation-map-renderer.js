@@ -555,6 +555,8 @@ class NavigationMapRenderer {
     this.maxReliableElevationDifference = 12;
     this.ready = false;
     this.active = false;
+    this.initializationError = null;
+    this.trackSupported = null;
     this.trackInfo = null;
     this.currentTrackKey = "";
     this.orientationMode = "headingUp";
@@ -567,18 +569,26 @@ class NavigationMapRenderer {
     this.lastInteractionTime = 0;
     this.statusElement = document.getElementById("road-direction-status");
     this.guidanceElement = document.getElementById("route-guidance-status");
+    this.stateElement = document.getElementById("navigation-map-state");
     this.recenterBtn = document.getElementById("btn-recenter");
-    this.readyPromise = this.initialize();
+    this.readyPromise = this.initialize().catch((error) => {
+      this.initializationError = error;
+      this.setMapState(`Navigation map unavailable: ${error.message || error}`);
+      throw error;
+    });
   }
 
   get capabilities() {
+    const available = this.ready && !this.initializationError && this.trackSupported !== false;
     return {
-      vectorMap: true,
+      vectorMap: available,
       offline: true,
-      mapMatching: true,
-      directionDetection: true,
-      routing: !!this.graph,
-      activeRoute: !!this.activeRoute,
+      mapMatching: available,
+      directionDetection: available,
+      routing: available && !!this.graph,
+      activeRoute: available && !!this.activeRoute,
+      unsupportedTrack: this.trackSupported === false,
+      failed: !!this.initializationError,
     };
   }
 
@@ -771,6 +781,7 @@ class NavigationMapRenderer {
     this.map.on("pitchstart", markBrowsing);
     this.ready = true;
     this.setTheme(this.theme);
+    this.applyTrackSupport();
     return this;
   }
 
@@ -779,8 +790,8 @@ class NavigationMapRenderer {
     const activating = nextActive && !this.active;
     this.active = nextActive;
     if (activating) {
-      // The car may have moved a long way while Simple Map was active. Reset
-      // visual and matching continuity so the first Navigation frame starts
+      // The car may have moved a long way while this renderer was inactive.
+      // Reset visual and matching continuity so the first frame starts
       // at the live coordinate instead of sweeping across the map.
       this.displayPoint = null;
       this.displayBearing = null;
@@ -792,8 +803,11 @@ class NavigationMapRenderer {
       this.matcher?.resetContinuity();
     }
     if (this.container) this.container.classList.toggle("active", this.active);
-    if (this.statusElement) this.statusElement.hidden = !this.active;
-    if (this.guidanceElement) this.guidanceElement.hidden = !this.active || !this.activeRoute;
+    const mapAvailable = this.trackSupported !== false && !this.initializationError;
+    if (this.statusElement) this.statusElement.hidden = !this.active || !mapAvailable;
+    if (this.guidanceElement) {
+      this.guidanceElement.hidden = !this.active || !mapAvailable || !this.activeRoute;
+    }
     if (this.active && this.map) {
       window.setTimeout(() => this.map.resize(), 0);
     }
@@ -802,9 +816,46 @@ class NavigationMapRenderer {
   setTrackInfo(info, trackName) {
     this.trackInfo = info || this.trackInfo;
     this.currentTrackKey = trackName || this.currentTrackKey;
+    const previousSupport = this.trackSupported;
+    if (this.trackInfo && typeof this.trackInfo.isSRP === "boolean") {
+      this.trackSupported = this.trackInfo.isSRP;
+    } else if (this.currentTrackKey) {
+      this.trackSupported = /shuto|srp/i.test(this.currentTrackKey);
+    }
+    if (previousSupport !== this.trackSupported) this.applyTrackSupport();
+    return previousSupport !== this.trackSupported;
+  }
+
+  setMapState(message = "") {
+    if (!this.stateElement) return;
+    this.stateElement.textContent = message;
+    this.stateElement.hidden = !message;
+  }
+
+  applyTrackSupport() {
+    const supported = this.trackSupported !== false;
+    if (this.initializationError) {
+      this.setMapState(`Navigation map unavailable: ${this.initializationError.message || this.initializationError}`);
+    } else if (!supported) {
+      this.setMapState("Game Navigation is currently available on SRP tracks only.");
+    } else {
+      this.setMapState();
+    }
+    for (const layerId of ["road-casing", "roads", "road-direction-arrows", "route-casing", "route-line"]) {
+      if (this.map?.getLayer(layerId)) {
+        this.map.setLayoutProperty(layerId, "visibility", supported ? "visible" : "none");
+      }
+    }
+    if (this.marker) this.marker.getElement().hidden = !supported;
+    if (!supported && (this.destination || this.activeRoute)) this.clearDestination();
+    if (this.statusElement) this.statusElement.hidden = !this.active || !supported;
+    if (this.guidanceElement) {
+      this.guidanceElement.hidden = !this.active || !supported || !this.activeRoute;
+    }
   }
 
   setTheme(theme) {
+    const previousTheme = this.theme;
     this.theme = theme === "light" ? "light" : "dark";
     if (!this.map || !this.map.isStyleLoaded()) return;
     const light = this.theme === "light";
@@ -818,6 +869,9 @@ class NavigationMapRenderer {
       4, light ? "#f8fafc" : "#e2e8f0",
       light ? "#e2e8f0" : "#94a3b8",
     ]);
+    if (previousTheme !== this.theme && this.map.hasImage("road-direction-arrow")) {
+      this.map.updateImage("road-direction-arrow", this.createArrowImage());
+    }
   }
 
   updateEnvironment() {}
@@ -900,6 +954,7 @@ class NavigationMapRenderer {
   setTiltAngle(angle) {
     this.tiltAngle = Math.max(0, Math.min(this.tiltedAngle, angle));
     this.is3D = this.tiltAngle > 10;
+    localStorage.setItem("gps_3d_tilt", this.is3D ? "true" : "false");
     if (this.map) this.map.easeTo({ pitch: this.tiltAngle, duration: 250 });
     return this.is3D;
   }
@@ -910,6 +965,7 @@ class NavigationMapRenderer {
 
   setAutoZoom(enabled) {
     this.autoZoomEnabled = !!enabled;
+    localStorage.setItem("gps_auto_zoom", this.autoZoomEnabled ? "true" : "false");
     return this.autoZoomEnabled;
   }
 
@@ -929,7 +985,9 @@ class NavigationMapRenderer {
   }
 
   getDestinations() {
-    return this.destinations.map((destination) => destination.name);
+    return this.trackSupported === false
+      ? []
+      : this.destinations.map((destination) => destination.name);
   }
 
   routeGeoJson(coordinates) {
@@ -946,7 +1004,18 @@ class NavigationMapRenderer {
   }
 
   navigationMatches(point, bearing, elevation) {
-    return this.matcher?.routeCandidates(point, bearing, elevation) || [];
+    const matches = this.matcher?.routeCandidates(point, bearing, elevation) || [];
+    if (!matches.length) return [];
+    const primary = matches[0];
+    return matches.filter((match) => (
+      match.distance <= Math.min(this.maxReliableMatchDistance, primary.distance + 12)
+      && match.score <= primary.score + 20
+      && match.elevationDifference <= Math.min(
+        this.maxReliableElevationDifference,
+        primary.elevationDifference + 3
+      )
+      && match.directionDifference <= primary.directionDifference + 20
+    ));
   }
 
   planRoute(point, bearing, elevation, destination = this.destination) {
@@ -988,6 +1057,9 @@ class NavigationMapRenderer {
   }
 
   setDestination(destinationName) {
+    if (this.trackSupported === false) {
+      return { error: "Route guidance is available on SRP tracks only." };
+    }
     const destination = this.destinations.find((item) => item.name === destinationName);
     if (!destination) return { error: "Choose a valid destination." };
     if (!this.graph || !this.lastGamePoint) return { error: "Waiting for a road position." };
@@ -1067,21 +1139,24 @@ class NavigationMapRenderer {
     return true;
   }
 
-  updateRouteProgress(matches, force = false) {
-    if (!this.activeRoute || !this.destination || !matches?.length) return;
-    const now = performance.now();
+  updateRouteProgress(matches, force = false, now = performance.now()) {
+    if (!this.activeRoute || !this.destination) return;
     if (!force && now - this.lastRouteProgressUpdate < 300) return;
     this.lastRouteProgressUpdate = now;
 
     let progress = null;
-    for (const match of matches) {
+    for (const match of matches || []) {
       progress = this.findRouteSegment(match);
       if (progress) break;
     }
     if (!progress) {
       if (!this.offRouteSince) this.offRouteSince = now;
       if (now - this.offRouteSince >= this.routeRecalculationDelayMs) {
-        this.recalculateRoute(now);
+        if (this.guidanceElement) {
+          this.guidanceElement.innerText = "Off route - finding a new route...";
+          this.guidanceElement.classList.remove("route-arriving");
+        }
+        if (matches?.length) this.recalculateRoute(now);
       }
       return;
     }
@@ -1120,7 +1195,8 @@ class NavigationMapRenderer {
   }
 
   render(interpolator) {
-    if (!this.active || !this.ready || !this.map || !this.projection) return;
+    if (!this.active || !this.ready || !this.map || !this.projection
+      || this.trackSupported === false || this.initializationError) return;
     const position = interpolator.currentPos;
     if (!position || position.length < 3) return;
 
@@ -1171,8 +1247,11 @@ class NavigationMapRenderer {
     }
     this.lastMarkerPoint = reliableMatch?.point || targetPoint;
     this.setDirectionStatus(reliableMatch);
-    const routeMatches = this.navigationMatches(targetPoint, travelBearing, position[1]);
-    this.updateRouteProgress(routeMatches);
+    const routeNow = performance.now();
+    if (this.activeRoute && routeNow - this.lastRouteProgressUpdate >= 300) {
+      const routeMatches = this.navigationMatches(targetPoint, travelBearing, position[1]);
+      this.updateRouteProgress(routeMatches, false, routeNow);
+    }
 
     if (this.isFreeBrowsing && Date.now() - this.lastInteractionTime > 15000 && interpolator.currentSpeed > 5) {
       this.recenter();

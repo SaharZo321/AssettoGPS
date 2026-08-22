@@ -11,5 +11,5 @@ OpenStreetMap copyright and attribution information:
 https://www.openstreetmap.org/copyright
 
 This attribution applies to the retained OSM experiment only. Game Navigation
-uses the separate game-native traffic-lane prototype, and the Simple SVG map
-does not use this OSM extract.
+uses the separate game-native traffic-lane prototype and does not load this
+OSM extract.
