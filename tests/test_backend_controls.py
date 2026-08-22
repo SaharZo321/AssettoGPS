@@ -277,6 +277,14 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertIn("oneway", renderer)
         self.assertIn('rotationAlignment: "viewport"', renderer)
         self.assertIn('pitchAlignment: "viewport"', renderer)
+
+    def test_navigation_auto_zoom_is_twenty_five_percent_closer(self):
+        renderer = (
+            server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("SRP_NAVIGATION_AUTO_ZOOM_SCALE = 1.25", renderer)
+        self.assertIn("Math.log2(SRP_NAVIGATION_AUTO_ZOOM_SCALE)", renderer)
         self.assertIn("const targetPoint = longitudeLatitude;", renderer)
         self.assertNotIn("const targetPoint = match?.point", renderer)
         self.assertIn("reliableMatch?.alignedBearing", renderer)

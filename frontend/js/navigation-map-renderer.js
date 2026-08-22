@@ -4,6 +4,8 @@
  * MapLibre renders SRP's own directed traffic lanes in game coordinates.
  */
 
+const SRP_NAVIGATION_AUTO_ZOOM_SCALE = 1.25;
+
 class SrpGameProjection {
   constructor(config) {
     this.origin = config.origin || [139.75, 35.6];
@@ -994,7 +996,9 @@ class NavigationMapRenderer {
     }
     if (!this.isFreeBrowsing) {
       const speedRatio = Math.min(Math.max(interpolator.currentSpeed / 250, 0), 1);
-      const zoom = this.autoZoomEnabled ? 15.6 - speedRatio * 1.7 : 14.8;
+      const zoom = this.autoZoomEnabled
+        ? 15.6 + Math.log2(SRP_NAVIGATION_AUTO_ZOOM_SCALE) - speedRatio * 1.7
+        : 14.8;
       // Camera and marker must move in the same animation frame. Throttling
       // only the camera makes a centered marker drift and snap back.
       this.map.jumpTo({
