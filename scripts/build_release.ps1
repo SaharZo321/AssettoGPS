@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "0.2.0-beta.12",
+    [string]$Version = "0.2.0-beta.13",
     [switch]$SkipTests
 )
 
@@ -25,6 +25,10 @@ try {
         uv run --group build python -m unittest discover -s tests -v
         if ($LASTEXITCODE -ne 0) {
             throw "Unit tests failed."
+        }
+        uv run python scripts\verify_srp_routing.py
+        if ($LASTEXITCODE -ne 0) {
+            throw "SRP routing audit failed."
         }
     }
 

@@ -213,6 +213,42 @@ class DirectedRoadMatcher {
     );
     return best;
   }
+
+  routeCandidates(point, vehicleBearing, vehicleElevation = null) {
+    const candidates = [];
+    for (const segment of this.candidates(point)) {
+      const projection = this.project(point, segment);
+      const roadBearing = DirectedRoadMatcher.bearing(segment.from, segment.to);
+      const directionDifference = Math.abs(
+        DirectedRoadMatcher.normalizeAngle(vehicleBearing - roadBearing)
+      );
+      const elevationDifference = vehicleElevation === null
+        ? 0
+        : Math.abs(vehicleElevation - projection.elevation);
+      if (segment.oneWay && directionDifference > 90) continue;
+      if (projection.distance > 120 || elevationDifference > 12) continue;
+      const score = (projection.distance * 3)
+        + (directionDifference * 0.35)
+        + (elevationDifference * 4);
+      candidates.push({
+        ...projection,
+        score,
+        roadBearing,
+        directionDifference,
+        elevationDifference,
+        wayId: segment.wayId,
+        segmentKey: segment.key,
+        segmentFrom: segment.from,
+        segmentTo: segment.to,
+        oneWay: segment.oneWay,
+        properties: segment.properties,
+        withFlow: true,
+        alignedBearing: roadBearing,
+      });
+    }
+    return candidates.sort((left, right) => left.score - right.score);
+  }
+
 }
 
 class DirectedRoadGraph {
@@ -234,6 +270,29 @@ class DirectedRoadGraph {
       (from[0] - to[0]) * 111320 * Math.cos(averageLatitude),
       (from[1] - to[1]) * 111320
     );
+  }
+
+  project(point, from, to) {
+    const latitudeRadians = (point[1] * Math.PI) / 180;
+    const longitudeScale = 111320 * Math.cos(latitudeRadians);
+    const latitudeScale = 111320;
+    const ax = (from[0] - point[0]) * longitudeScale;
+    const ay = (from[1] - point[1]) * latitudeScale;
+    const bx = (to[0] - point[0]) * longitudeScale;
+    const by = (to[1] - point[1]) * latitudeScale;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const lengthSquared = dx * dx + dy * dy;
+    const amount = lengthSquared
+      ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / lengthSquared))
+      : 0;
+    return {
+      point: [
+        point[0] + (ax + dx * amount) / longitudeScale,
+        point[1] + (ay + dy * amount) / latitudeScale,
+      ],
+      amount,
+    };
   }
 
   ensureNode(point) {
@@ -443,8 +502,10 @@ class DirectedRoadGraph {
     if (keys[keys.length - 1] !== start.key) return null;
     keys.reverse();
     const coordinates = keys.map((nodeKey) => this.nodes.get(nodeKey).point);
+    const nodeKeys = [...keys];
     if (start.routeOrigin && this.distance(start.routeOrigin, coordinates[0]) > 0.05) {
       coordinates.unshift(start.routeOrigin);
+      nodeKeys.unshift(null);
     }
     const remaining = new Array(coordinates.length).fill(0);
     for (let index = coordinates.length - 2; index >= 0; index -= 1) {
@@ -452,6 +513,7 @@ class DirectedRoadGraph {
     }
     return {
       coordinates,
+      nodeKeys,
       remaining,
       distanceM: distances.get(destination.key),
       startSnapDistanceM: Number(startMatch.distance) || 0,
@@ -473,8 +535,14 @@ class NavigationMapRenderer {
     this.activeRoute = null;
     this.destination = null;
     this.routeProgressIndex = 0;
+    this.routeProgressAmount = 0;
     this.lastRouteProgressUpdate = 0;
+    this.offRouteSince = 0;
+    this.lastRerouteAttempt = Number.NEGATIVE_INFINITY;
+    this.routeRecalculationDelayMs = 1800;
+    this.routeRecalculationCooldownMs = 4000;
     this.lastMarkerPoint = null;
+    this.lastGamePoint = null;
     this.displayPoint = null;
     this.displayBearing = null;
     this.lastRenderTime = 0;
@@ -864,32 +932,63 @@ class NavigationMapRenderer {
     window.dispatchEvent(new CustomEvent("gps-navigation-route-changed", { detail }));
   }
 
-  setDestination(destinationName) {
-    const destination = this.destinations.find((item) => item.name === destinationName);
-    if (!destination) return { error: "Choose a valid destination." };
-    if (!this.graph || !this.lastMarkerPoint) return { error: "Waiting for a road position." };
+  navigationMatches(point, bearing, elevation) {
+    return this.matcher?.routeCandidates(point, bearing, elevation) || [];
+  }
 
-    if (!this.lastReliableMatch) return { error: "Waiting for a game-lane position." };
-    const route = this.graph.route(
-      this.lastReliableMatch.point,
-      destination.point,
-      this.lastReliableMatch
-    );
-    if (!route) return { error: "No directed route is available from this carriageway." };
-    this.destination = destination;
+  planRoute(point, bearing, elevation, destination = this.destination) {
+    if (!destination) return null;
+    let best = null;
+    const seenStarts = new Set();
+    for (const match of this.navigationMatches(point, bearing, elevation)) {
+      const startKey = this.graph.key(match.segmentTo);
+      if (seenStarts.has(startKey)) continue;
+      seenStarts.add(startKey);
+      const route = this.graph.route(match.point, destination.point, match);
+      if (!route) continue;
+      const score = route.distanceM
+        + (match.distance * 5)
+        + (match.directionDifference * 1.5)
+        + (match.elevationDifference * 8);
+      if (!best || score < best.score) best = { route, match, score };
+    }
+    return best;
+  }
+
+  applyRoute(route, recalculated = false) {
     this.activeRoute = route;
     this.routeProgressIndex = 0;
+    this.routeProgressAmount = 0;
+    this.offRouteSince = 0;
     const source = this.map?.getSource("active-route");
     if (source) source.setData(this.routeGeoJson(route.coordinates));
     if (this.guidanceElement) this.guidanceElement.hidden = !this.active;
     const detail = {
       active: true,
-      destination: destination.name,
+      destination: this.destination.name,
       distanceM: route.distanceM,
       nodeCount: route.coordinates.length,
+      recalculated,
     };
     this.dispatchRouteChange(detail);
-    this.updateRouteProgress(this.lastMarkerPoint, true);
+    return detail;
+  }
+
+  setDestination(destinationName) {
+    const destination = this.destinations.find((item) => item.name === destinationName);
+    if (!destination) return { error: "Choose a valid destination." };
+    if (!this.graph || !this.lastGamePoint) return { error: "Waiting for a road position." };
+
+    const plan = this.planRoute(
+      this.lastGamePoint,
+      this.lastTravelBearing,
+      this.lastVehicleElevation,
+      destination
+    );
+    if (!plan) return { error: "No directed route is available from nearby with-traffic lanes." };
+    this.destination = destination;
+    const detail = this.applyRoute(plan.route);
+    this.updateRouteProgress([plan.match], true);
     return detail;
   }
 
@@ -897,6 +996,8 @@ class NavigationMapRenderer {
     this.destination = null;
     this.activeRoute = null;
     this.routeProgressIndex = 0;
+    this.routeProgressAmount = 0;
+    this.offRouteSince = 0;
     const source = this.map?.getSource("active-route");
     if (source) source.setData(this.routeGeoJson([]));
     if (this.guidanceElement) this.guidanceElement.hidden = true;
@@ -905,28 +1006,94 @@ class NavigationMapRenderer {
     return detail;
   }
 
-  updateRouteProgress(point, force = false) {
-    if (!this.activeRoute || !this.destination || !this.guidanceElement) return;
+  findRouteSegment(match) {
+    if (!match || !this.activeRoute?.nodeKeys?.length) return null;
+    const fromKey = this.graph.key(match.segmentFrom);
+    const toKey = this.graph.key(match.segmentTo);
+    const nodeKeys = this.activeRoute.nodeKeys;
+    const start = Math.max(0, this.routeProgressIndex - 1);
+    for (let index = start; index < nodeKeys.length - 1; index += 1) {
+      if (nodeKeys[index + 1] !== toKey) continue;
+      if (nodeKeys[index] !== null && nodeKeys[index] !== fromKey) continue;
+      const projection = this.graph.project(
+        match.point,
+        this.activeRoute.coordinates[index],
+        this.activeRoute.coordinates[index + 1]
+      );
+      return { index, ...projection };
+    }
+    return null;
+  }
+
+  redrawRemainingRoute(progress) {
+    const coordinates = this.activeRoute.coordinates;
+    const remainingCoordinates = [
+      progress.point,
+      ...coordinates.slice(progress.index + 1),
+    ];
+    const source = this.map?.getSource("active-route");
+    if (source) source.setData(this.routeGeoJson(remainingCoordinates));
+  }
+
+  recalculateRoute(now) {
+    if (now - this.lastRerouteAttempt < this.routeRecalculationCooldownMs) return false;
+    this.lastRerouteAttempt = now;
+    const plan = this.planRoute(
+      this.lastGamePoint,
+      this.lastTravelBearing,
+      this.lastVehicleElevation
+    );
+    if (!plan) {
+      if (this.guidanceElement) {
+        this.guidanceElement.innerText = "Off route - finding a new route...";
+        this.guidanceElement.classList.remove("route-arriving");
+      }
+      return false;
+    }
+    this.applyRoute(plan.route, true);
+    return true;
+  }
+
+  updateRouteProgress(matches, force = false) {
+    if (!this.activeRoute || !this.destination || !matches?.length) return;
     const now = performance.now();
     if (!force && now - this.lastRouteProgressUpdate < 300) return;
     this.lastRouteProgressUpdate = now;
 
-    const coordinates = this.activeRoute.coordinates;
-    const start = Math.max(0, this.routeProgressIndex - 40);
-    const end = this.routeProgressIndex === 0
-      ? coordinates.length
-      : Math.min(coordinates.length, this.routeProgressIndex + 600);
-    let bestIndex = this.routeProgressIndex;
-    let bestDistance = Infinity;
-    for (let index = start; index < end; index += 1) {
-      const distance = this.graph.distance(point, coordinates[index]);
-      if (distance < bestDistance) {
-        bestDistance = distance;
-        bestIndex = index;
-      }
+    let progress = null;
+    for (const match of matches) {
+      progress = this.findRouteSegment(match);
+      if (progress) break;
     }
-    this.routeProgressIndex = Math.max(this.routeProgressIndex, bestIndex);
-    const remaining = this.activeRoute.remaining[this.routeProgressIndex] || 0;
+    if (!progress) {
+      if (!this.offRouteSince) this.offRouteSince = now;
+      if (now - this.offRouteSince >= this.routeRecalculationDelayMs) {
+        this.recalculateRoute(now);
+      }
+      return;
+    }
+    this.offRouteSince = 0;
+    if (progress.index < this.routeProgressIndex) return;
+    if (progress.index === this.routeProgressIndex) {
+      progress.amount = Math.max(this.routeProgressAmount, progress.amount);
+      const from = this.activeRoute.coordinates[progress.index];
+      const to = this.activeRoute.coordinates[progress.index + 1];
+      progress.point = [
+        from[0] + (to[0] - from[0]) * progress.amount,
+        from[1] + (to[1] - from[1]) * progress.amount,
+      ];
+    } else {
+      this.routeProgressIndex = progress.index;
+    }
+    this.routeProgressAmount = progress.amount;
+    this.redrawRemainingRoute(progress);
+    const segmentRemaining = this.graph.distance(
+      progress.point,
+      this.activeRoute.coordinates[progress.index + 1]
+    );
+    const remaining = segmentRemaining
+      + (this.activeRoute.remaining[progress.index + 1] || 0);
+    if (!this.guidanceElement) return;
     if (remaining < 80) {
       this.guidanceElement.innerText = `${this.destination.name} - arriving`;
       this.guidanceElement.classList.add("route-arriving");
@@ -955,6 +1122,7 @@ class NavigationMapRenderer {
       telemetryBearing
     );
     this.lastTravelBearing = travelBearing;
+    this.lastVehicleElevation = position[1];
     const match = this.matcher.match(longitudeLatitude, travelBearing, position[1]);
     const reliableMatch = match
       && match.distance <= this.maxReliableMatchDistance
@@ -966,6 +1134,7 @@ class NavigationMapRenderer {
     // Matching informs direction and routing, but never relocates the camera
     // or marker. Both already occupy the exact same game coordinate space.
     const targetPoint = longitudeLatitude;
+    this.lastGamePoint = targetPoint;
     const targetBearing = reliableMatch?.alignedBearing ?? travelBearing;
     const now = performance.now();
     const deltaSeconds = this.lastRenderTime
@@ -989,7 +1158,8 @@ class NavigationMapRenderer {
     }
     this.lastMarkerPoint = reliableMatch?.point || targetPoint;
     this.setDirectionStatus(reliableMatch);
-    this.updateRouteProgress(this.lastMarkerPoint);
+    const routeMatches = this.navigationMatches(targetPoint, travelBearing, position[1]);
+    this.updateRouteProgress(routeMatches);
 
     if (this.isFreeBrowsing && Date.now() - this.lastInteractionTime > 15000 && interpolator.currentSpeed > 5) {
       this.recenter();

@@ -110,12 +110,13 @@ Then open http://127.0.0.1:8080.
 Run the tests:
 
     uv run python -m unittest discover -s tests -v
+    uv run python scripts/verify_srp_routing.py
 
 Build and test the drag-and-drop Content Manager ZIP on Windows:
 
     ./scripts/build_release.ps1
 
-The output is build/AssettoGPS-0.2.0-beta.12.zip. The build script is only for
+The output is build/AssettoGPS-0.2.0-beta.13.zip. The build script is only for
 project maintainers; players install the resulting ZIP directly through Content
 Manager.
 
@@ -124,6 +125,7 @@ Manager.
 The release build performs:
 
 - backend unit tests;
+- SRP connector, connectivity, destination-reachability, and golden-route checks;
 - a PyInstaller standalone Windows build;
 - a real packaged-server startup in mock mode;
 - HTTP status and protected-control checks;

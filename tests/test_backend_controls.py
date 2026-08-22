@@ -278,6 +278,20 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertIn('rotationAlignment: "viewport"', renderer)
         self.assertIn('pitchAlignment: "viewport"', renderer)
 
+    def test_navigation_route_progress_and_recalculation_are_enabled(self):
+        renderer = (
+            server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("routeCandidates", renderer)
+        self.assertIn("planRoute", renderer)
+        self.assertIn("nodeKeys", renderer)
+        self.assertIn("redrawRemainingRoute", renderer)
+        self.assertIn("recalculateRoute", renderer)
+        self.assertIn("routeRecalculationDelayMs = 1800", renderer)
+        self.assertIn("this.updateRouteProgress(routeMatches)", renderer)
+        self.assertNotIn("this.updateRouteProgress(this.lastMarkerPoint)", renderer)
+
     def test_navigation_auto_zoom_is_twenty_five_percent_closer(self):
         renderer = (
             server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
@@ -290,7 +304,7 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertIn("reliableMatch?.alignedBearing", renderer)
         self.assertIn("resolveTravelBearing", renderer)
         self.assertIn("startMatch?.segmentTo", renderer)
-        self.assertIn("Waiting for a game-lane position.", renderer)
+        self.assertIn("Waiting for a road position.", renderer)
         self.assertIn("const displayJump", renderer)
         self.assertIn("this.matcher?.resetContinuity();", renderer)
         self.assertIn("this.recenter();", renderer)
