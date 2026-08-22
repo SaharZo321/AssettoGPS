@@ -48,6 +48,113 @@
   transition: background 0.3s ease;
 }
 
+/* Optional MapLibre renderer. It stays dormant until Navigation Map is chosen. */
+#navigation-map {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  visibility: hidden;
+  opacity: 0;
+  background: #080d16;
+  transition: opacity 0.2s ease;
+}
+
+#navigation-map.active {
+  visibility: visible;
+  opacity: 1;
+}
+
+#app-container[data-map-mode="navigation"] #map-canvas,
+#app-container[data-map-mode="navigation"] #hud-canvas,
+#app-container[data-map-mode="navigation"] #horizon-fog {
+  display: none;
+}
+
+#navigation-map .maplibregl-canvas {
+  outline: none;
+}
+
+#navigation-map .maplibregl-ctrl-bottom-right {
+  right: 10px;
+  bottom: 82px;
+  z-index: 6;
+}
+
+#navigation-map .maplibregl-ctrl-attrib {
+  border-radius: 7px;
+  background: rgba(8, 13, 22, 0.78);
+  color: #cbd5e1;
+}
+
+#navigation-map .maplibregl-ctrl-attrib a {
+  color: #7dd3fc;
+}
+
+.navigation-car-marker {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 3px solid #ffffff;
+  border-radius: 50% 50% 50% 12%;
+  background: #0284c7;
+  box-shadow: 0 4px 18px rgba(2, 132, 199, 0.8);
+  transform: rotate(45deg);
+}
+
+.navigation-car-arrow {
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 16px solid #ffffff;
+  transform: rotate(-45deg) translate(1px, 1px);
+}
+
+.road-direction-status {
+  position: absolute;
+  top: 94px;
+  left: 50%;
+  z-index: 12;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(82vw, 420px);
+  padding: 7px 14px;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  border-radius: 999px;
+  background: rgba(8, 13, 22, 0.86);
+  color: #e2e8f0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+.road-direction-status[hidden] {
+  display: none;
+}
+
+.road-direction-status.direction-with-flow {
+  border-color: rgba(34, 197, 94, 0.65);
+  color: #bbf7d0;
+}
+
+.road-direction-status.direction-against-flow {
+  border-color: rgba(239, 68, 68, 0.75);
+  color: #fecaca;
+  background: rgba(69, 10, 10, 0.9);
+}
+
+.direction-icon {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
 /* Canvas Area - Oversized for deep 3D horizon rendering */
 #map-canvas {
   position: absolute;
@@ -495,6 +602,35 @@
   color: #fbbf24;
   font-size: 0.76rem;
   line-height: 1.35;
+}
+
+.map-mode-note {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--bg-card-border);
+  border-radius: 9px;
+  background: rgba(2, 132, 199, 0.08);
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.map-mode-note.navigation-ready {
+  border-color: rgba(34, 197, 94, 0.35);
+  color: #86efac;
+}
+
+.map-mode-note.map-mode-error {
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #fca5a5;
+}
+
+[data-theme="light"] .map-mode-note.navigation-ready {
+  color: #166534;
+}
+
+[data-theme="light"] .map-mode-note.map-mode-error {
+  color: #991b1b;
 }
 
 [data-theme="light"] .setting-requirement {
@@ -1031,6 +1167,11 @@
   }
   #nav-subtitle {
     font-size: 0.72rem;
+  }
+  .road-direction-status {
+    top: 54px;
+    padding: 5px 11px;
+    font-size: 0.7rem;
   }
 
   /* Speedometer HUD (Bottom Left) */

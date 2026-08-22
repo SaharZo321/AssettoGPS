@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 import unittest
 import uuid
@@ -151,6 +152,47 @@ class SrpVectorMapTests(unittest.TestCase):
 
         self.assertEqual(response.media_type, "image/svg+xml")
         self.assertEqual(Path(response.path), server.SRP_MAP_PATH)
+
+    def test_offline_navigation_map_preserves_directed_osm_ways(self):
+        roads_path = server.FRONTEND_DIR / "assets" / "maps" / "srp-osm-roads.geojson"
+        roads = json.loads(roads_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(roads["type"], "FeatureCollection")
+        self.assertIn("OpenStreetMap contributors", roads["attribution"])
+        self.assertGreater(len(roads["features"]), 1_500)
+        directed = 0
+        for feature in roads["features"]:
+            self.assertEqual(feature["geometry"]["type"], "LineString")
+            self.assertGreaterEqual(len(feature["geometry"]["coordinates"]), 2)
+            if feature["properties"]["oneway"] in {"yes", "1", "-1"}:
+                directed += 1
+        self.assertGreater(directed / len(roads["features"]), 0.98)
+
+    def test_srp_navigation_calibration_has_local_controls(self):
+        calibration_path = (
+            server.FRONTEND_DIR / "assets" / "maps" / "srp-osm-calibration.json"
+        )
+        calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(calibration["method"], "affine-with-local-idw-correction")
+        self.assertGreaterEqual(len(calibration["anchors"]), 12)
+        self.assertEqual(len(calibration["affine"]["longitude"]), 3)
+        self.assertEqual(len(calibration["affine"]["latitude"]), 3)
+
+    def test_frontend_exposes_both_map_modes_and_local_maplibre(self):
+        index = (server.FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
+        controller = (server.FRONTEND_DIR / "js" / "map-mode-controller.js").read_text(
+            encoding="utf-8"
+        )
+        license_text = (
+            server.FRONTEND_DIR / "assets" / "maps" / "OSM-LICENSE.txt"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('data-map-mode="simple"', index)
+        self.assertIn('data-map-mode="navigation"', index)
+        self.assertIn('/vendor/maplibre-gl/maplibre-gl.js', index)
+        self.assertIn('localStorage.getItem("gps_map_mode")', controller)
+        self.assertIn("OpenStreetMap contributors", license_text)
 
 
 if __name__ == "__main__":

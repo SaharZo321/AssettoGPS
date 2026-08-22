@@ -8,7 +8,7 @@ class App {
     this.reconnectTimer = null;
     this.wakeLock = null;
 
-    this.renderer = new MapRenderer("map-canvas");
+    this.renderer = new MapModeController("map-canvas", "navigation-map");
     this.interpolator = window.motionInterpolator;
     this.ui = window.navUI;
     this.audio = window.audioAlerts;
@@ -148,6 +148,30 @@ class App {
     });
   }
 
+  updateMapModeUi(detail = {}) {
+    const mode = detail.mode || this.renderer.mapMode || "simple";
+    const capabilities = detail.capabilities || this.renderer.capabilities;
+    const error = detail.error || null;
+    this.updateSegmentedActive("control-map-mode", "data-map-mode", mode);
+
+    const note = document.getElementById("map-mode-note");
+    if (note) {
+      note.classList.toggle("navigation-ready", mode === "navigation" && !error);
+      note.classList.toggle("map-mode-error", !!error);
+      if (error) {
+        note.innerText = `Navigation Map could not start (${error}). Simple Map was restored.`;
+      } else if (mode === "navigation") {
+        note.innerText = "Offline OSM carriageways and direction detection are active. Turn-by-turn routing is not enabled yet.";
+      } else {
+        note.innerText = "Exact offline SVG map. Route guidance is unavailable in Simple Map mode.";
+      }
+    }
+
+    if (this.ui && typeof this.ui.setMapCapabilities === "function") {
+      this.ui.setMapCapabilities(capabilities, mode);
+    }
+  }
+
   setupEventListeners() {
     // Orientation button (Heading-up vs North-up) with clean SVGs
     const btnOrientation = document.getElementById("btn-orientation");
@@ -229,6 +253,33 @@ class App {
       if (e.key === "Escape" && modalSettings && modalSettings.classList.contains("open")) {
         closeSettings();
       }
+    });
+
+    // Map Mode: exact SVG Simple Map or offline OSM Navigation Map.
+    this.updateMapModeUi({ mode: this.renderer.mapMode, capabilities: this.renderer.capabilities });
+    window.addEventListener("gps-map-mode-changed", (event) => {
+      this.updateMapModeUi(event.detail || {});
+      if (event.detail?.error) this.showToast("Navigation Map unavailable; Simple Map restored.");
+    });
+    const mapModeButtons = document.querySelectorAll("#control-map-mode .segmented-btn");
+    mapModeButtons.forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const selectedMode = btn.getAttribute("data-map-mode");
+        if (selectedMode === this.renderer.mapMode) return;
+        mapModeButtons.forEach((button) => {
+          button.disabled = true;
+          button.setAttribute("aria-busy", "true");
+        });
+        if (selectedMode === "navigation") this.showToast("Loading offline Navigation Map...");
+        try {
+          await this.renderer.setMapMode(selectedMode);
+        } finally {
+          mapModeButtons.forEach((button) => {
+            button.disabled = false;
+            button.removeAttribute("aria-busy");
+          });
+        }
+      });
     });
 
     // 1. Display Theme Segmented Control (Night / Day / Auto)

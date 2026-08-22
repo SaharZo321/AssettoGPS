@@ -5,15 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#0b0f19">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Assetto Corsa GPS Minimap</title>
   
   <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/vendor/maplibre-gl/maplibre-gl.css?v=5.24.0">
   <link rel="stylesheet" href="/css/waze-theme.css?v=43">
   <link rel="stylesheet" href="/css/style.css?v=43">
 </head>
 <body>
   <div id="app-container">
+    <!-- Optional offline OSM Navigation Map (Simple SVG Map remains default) -->
+    <div id="navigation-map" aria-label="Offline OpenStreetMap navigation map"></div>
+    <div id="road-direction-status" class="road-direction-status direction-unknown" role="status" hidden>
+      <span class="direction-icon">.</span><span>Finding carriageway...</span>
+    </div>
+
     <!-- Map Canvas (3D Tilted Ground Plane) -->
     <canvas id="map-canvas"></canvas>
 
@@ -122,6 +130,33 @@
         </div>
 
         <div class="modal-body">
+          <!-- Map Renderer Setting -->
+          <div class="setting-group">
+            <div class="setting-group-header">
+              <span class="setting-group-title">MAP MODE</span>
+            </div>
+            <div class="segmented-control map-mode-control" id="control-map-mode" role="radiogroup" aria-label="Map Mode">
+              <button type="button" class="segmented-btn active" data-map-mode="simple" role="radio" aria-checked="true">
+                <svg class="setting-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <path d="M7 16l3-4 3 2 4-6" />
+                </svg>
+                <span>Simple Map</span>
+              </button>
+              <button type="button" class="segmented-btn" data-map-mode="navigation" role="radio" aria-checked="false">
+                <svg class="setting-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M7 21V10a5 5 0 0 1 5-5h5" />
+                  <path d="M13 9l4-4-4-4" />
+                  <path d="M7 15l-4-4" />
+                </svg>
+                <span>Navigation Map</span>
+              </button>
+            </div>
+            <p id="map-mode-note" class="map-mode-note" role="status">
+              Exact offline SVG map. Route guidance is unavailable in Simple Map mode.
+            </p>
+          </div>
+
           <!-- Theme Setting -->
           <div class="setting-group">
             <div class="setting-group-header">
@@ -328,6 +363,9 @@
   <script src="/js/audio-alerts.js?v=43"></script>
   <script src="/js/interpolation.js?v=43"></script>
   <script src="/js/map-renderer.js?v=43"></script>
+  <script src="/vendor/maplibre-gl/maplibre-gl.js?v=5.24.0"></script>
+  <script src="/js/navigation-map-renderer.js?v=43"></script>
+  <script src="/js/map-mode-controller.js?v=43"></script>
   <script src="/js/navigation-ui.js?v=43"></script>
   <script src="/js/app.js?v=43"></script>
 </body>
