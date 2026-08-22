@@ -2,6 +2,7 @@ import asyncio
 import sys
 import unittest
 import uuid
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest import mock
 
@@ -13,6 +14,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1] / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
 
 import ac_shared_memory
+import ac_track_finder
 import server
 
 
@@ -116,6 +118,39 @@ class ControlEndpointTests(unittest.TestCase):
                 100.0 + server.CSP_ENVIRONMENT_TIMEOUT_SECONDS + 0.01
             )
         )
+
+
+class SrpVectorMapTests(unittest.TestCase):
+    def test_srp_calibration_does_not_require_installed_map_files(self):
+        finder = ac_track_finder.ACTrackFinder()
+        finder.ac_root = None
+        finder.cached_track_data.clear()
+
+        track = finder.get_track_info("shutoko_revival_project_beta", "main_layout")
+
+        self.assertEqual(track["mapWidth"], 5544.0)
+        self.assertEqual(track["mapHeight"], 8192.0)
+        self.assertAlmostEqual(track["scaleFactor"], 3.30555129051209)
+        self.assertAlmostEqual(track["xOffset"], 11119.814453125)
+        self.assertAlmostEqual(track["zOffset"], 10454.576171875)
+
+    def test_bundled_srp_map_is_real_vector_geometry(self):
+        root = ET.parse(server.SRP_MAP_PATH).getroot()
+        namespace = {"svg": "http://www.w3.org/2000/svg"}
+        roads = root.find("svg:path[@id='roads']", namespace)
+
+        self.assertEqual(root.attrib["viewBox"], "0 0 5544 8192")
+        self.assertIsNotNone(roads)
+        self.assertGreater(roads.attrib["d"].count("Q"), 2_000)
+        self.assertIsNone(root.find("svg:image", namespace))
+
+    def test_srp_map_endpoint_prefers_svg_over_installed_png(self):
+        response = asyncio.run(
+            server.get_track_map_image("shutoko_revival_project_beta")
+        )
+
+        self.assertEqual(response.media_type, "image/svg+xml")
+        self.assertEqual(Path(response.path), server.SRP_MAP_PATH)
 
 
 if __name__ == "__main__":

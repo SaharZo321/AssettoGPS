@@ -177,6 +177,19 @@ SRP_POIS = [
     },
 ]
 
+# All SRP 0.9.3 layouts use this Comfy Map coordinate space. Keeping the
+# calibration in the app means the bundled vector map remains aligned even if
+# an installation is missing a layout-specific map.ini or map.png.
+SRP_MAP_CALIBRATION = {
+    "mapWidth": 5544.0,
+    "mapHeight": 8192.0,
+    "scaleFactor": 3.30555129051209,
+    "xOffset": 11119.814453125,
+    "zOffset": 10454.576171875,
+    "margin": 0.0,
+    "drawingSize": 10.0,
+}
+
 
 class ACTrackFinder:
     """Finds and parses Assetto Corsa track files, map.ini, and map.png"""
@@ -305,19 +318,27 @@ class ACTrackFinder:
 
         is_srp = "shuto" in track_name.lower() or "srp" in track_name.lower()
 
+        calibration = (
+            SRP_MAP_CALIBRATION
+            if is_srp
+            else {
+                "mapWidth": 1024.0,
+                "mapHeight": 1024.0,
+                "scaleFactor": 1.0,
+                "xOffset": 0.0,
+                "zOffset": 0.0,
+                "margin": 0.0,
+                "drawingSize": 10.0,
+            }
+        )
+
         track_data: Dict[str, Any] = {
             "trackName": track_name,
             "trackConfig": config or "",
             "isSRP": is_srp,
             "hasMapImage": False,
             "mapImagePath": None,
-            "mapWidth": 1024,
-            "mapHeight": 1024,
-            "scaleFactor": 1.0,
-            "xOffset": 0.0,
-            "zOffset": 0.0,
-            "margin": 0,
-            "drawingSize": 10,
+            **calibration,
             "pois": SRP_POIS if is_srp else [],
         }
 

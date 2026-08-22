@@ -31,6 +31,7 @@ if getattr(sys, "frozen", False):
 else:
     RUNTIME_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = RUNTIME_ROOT / "frontend"
+SRP_MAP_PATH = FRONTEND_DIR / "assets" / "maps" / "srp.svg"
 
 app = FastAPI(title="Assetto Corsa GPS Minimap Server")
 
@@ -249,12 +250,16 @@ async def get_track_data():
     return track_info
 
 
+@app.get("/api/track/map")
 @app.get("/api/track/map.png")
 async def get_track_map_image(track: Optional[str] = None):
-    """Serves the track map image or a stylized fallback"""
+    """Serve the bundled SRP vector map, an installed PNG, or a fallback."""
     track_name = track or server_state["currentTrack"] or "shutoko_revival_project_beta"
     config = server_state["currentConfig"]
     track_info = track_finder.get_track_info(track_name, config)
+
+    if track_info.get("isSRP") and SRP_MAP_PATH.is_file():
+        return FileResponse(str(SRP_MAP_PATH), media_type="image/svg+xml")
 
     if track_info.get("hasMapImage") and track_info.get("mapImagePath"):
         img_path = Path(track_info["mapImagePath"])

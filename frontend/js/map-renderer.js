@@ -13,7 +13,9 @@ class MapRenderer {
     this.hudCtx = this.hudCanvas ? this.hudCanvas.getContext("2d") : null;
 
     this.mapImage = new Image();
+    this.mapVectorPaths = [];
     this.isMapLoaded = false;
+    this.mapLoadRequestId = 0;
     this.currentTrackKey = "";
 
     // Track calibration parameters (from map.ini)
@@ -340,14 +342,87 @@ class MapRenderer {
     }
   }
 
-  loadMapImage() {
-    this.mapImage.src = `/api/track/map.png?track=${encodeURIComponent(this.currentTrackKey)}&t=${Date.now()}`;
-    this.mapImage.onload = () => {
-      this.isMapLoaded = true;
-    };
-    this.mapImage.onerror = () => {
-      this.isMapLoaded = false;
-    };
+  loadRasterMap(blob, requestId) {
+    return new Promise((resolve) => {
+      const image = new Image();
+      const objectUrl = URL.createObjectURL(blob);
+
+      image.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        if (requestId === this.mapLoadRequestId) {
+          this.mapImage = image;
+          this.mapVectorPaths = [];
+          this.isMapLoaded = true;
+        }
+        resolve();
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        if (requestId === this.mapLoadRequestId) {
+          this.isMapLoaded = false;
+        }
+        resolve();
+      };
+      image.src = objectUrl;
+    });
+  }
+
+  async loadMapImage() {
+    const requestId = ++this.mapLoadRequestId;
+    this.isMapLoaded = false;
+    this.mapVectorPaths = [];
+
+    try {
+      const response = await fetch(
+        `/api/track/map?track=${encodeURIComponent(this.currentTrackKey)}&t=${Date.now()}`
+      );
+      if (!response.ok) {
+        throw new Error(`Map request failed with HTTP ${response.status}`);
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("image/svg+xml")) {
+        const svgText = await response.text();
+
+        if (typeof Path2D !== "undefined") {
+          try {
+            const documentNode = new DOMParser().parseFromString(svgText, "image/svg+xml");
+            if (documentNode.querySelector("parsererror")) {
+              throw new Error("Invalid SVG map response");
+            }
+
+            const vectorPaths = Array.from(documentNode.querySelectorAll("path[d]"))
+              .map((node) => new Path2D(node.getAttribute("d")))
+              .filter(Boolean);
+            if (vectorPaths.length === 0) {
+              throw new Error("SVG map did not contain any paths");
+            }
+
+            if (requestId === this.mapLoadRequestId) {
+              this.mapImage = new Image();
+              this.mapVectorPaths = vectorPaths;
+              this.isMapLoaded = true;
+            }
+            return;
+          } catch (vectorError) {
+            console.warn("Canvas vector paths are unavailable; using SVG image fallback", vectorError);
+          }
+        }
+
+        await this.loadRasterMap(
+          new Blob([svgText], { type: "image/svg+xml" }),
+          requestId
+        );
+        return;
+      }
+
+      await this.loadRasterMap(await response.blob(), requestId);
+    } catch (error) {
+      console.warn("Unable to load track map", error);
+      if (requestId === this.mapLoadRequestId) {
+        this.isMapLoaded = false;
+      }
+    }
   }
 
   setTrackInfo(info, trackName) {
@@ -636,8 +711,21 @@ class MapRenderer {
     }
     ctx.stroke();
 
-    // 3. Draw Track Map Image (Over the background grid)
-    if (this.isMapLoaded && this.mapImage.width > 0) {
+    // 3. Draw vector SRP geometry or the raster fallback over the grid.
+    if (this.isMapLoaded && this.mapVectorPaths.length > 0) {
+      const roadColor = isLight ? "#475569" : "#cbd5e1";
+      ctx.fillStyle = roadColor;
+      ctx.strokeStyle = roadColor;
+      // Preserve a crisp minimum on overview zooms without making close-up
+      // roads balloon. Path geometry itself continues to scale naturally.
+      ctx.lineWidth = Math.max(0.4, 0.9 / Math.max(currentZoom, 0.001));
+      ctx.lineJoin = "round";
+
+      for (const path of this.mapVectorPaths) {
+        ctx.fill(path, "evenodd");
+        ctx.stroke(path);
+      }
+    } else if (this.isMapLoaded && this.mapImage.width > 0) {
       ctx.drawImage(this.mapImage, 0, 0, this.trackInfo.mapWidth, this.trackInfo.mapHeight);
     }
 
