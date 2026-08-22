@@ -11,7 +11,6 @@
   --accent-green: #22c55e;
   --accent-yellow: #eab308;
   --accent-red: #ef4444;
-  --fog-gradient: linear-gradient(to bottom, #090d16 15%, rgba(9, 13, 22, 0.7) 60%, rgba(9, 13, 22, 0) 100%);
   --modal-bg: #131b2e;
   --modal-overlay: rgba(0, 0, 0, 0.75);
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -28,7 +27,6 @@
   --text-muted: #64748b;
   --accent-blue: #0284c7;
   --accent-cyan: #0284c7;
-  --fog-gradient: linear-gradient(to bottom, #e2e8f0 15%, rgba(226, 232, 240, 0.7) 60%, rgba(226, 232, 240, 0) 100%);
   --modal-bg: #ffffff;
   --modal-overlay: rgba(15, 23, 42, 0.45);
 }
@@ -41,53 +39,152 @@
   height: 100vh;
   display: flex;
   flex-direction: column;
-  perspective: max(1800px, 240vh);
-  perspective-origin: 50% 65%;
   overflow: hidden;
   background: var(--bg-main);
   transition: background 0.3s ease;
 }
 
-/* Canvas Area - Oversized for deep 3D horizon rendering */
-#map-canvas {
+/* Full-screen offline MapLibre renderer. */
+#navigation-map {
   position: absolute;
-  top: -80%;
-  left: -40%;
-  width: 180%;
-  height: 180%;
+  inset: 0;
   z-index: 1;
-  background: var(--bg-main);
-  transform-origin: 50% 80.55%;
-  transition: transform 0.35s cubic-bezier(0.25, 1, 0.5, 1);
-}
-
-/* Flat 2D HUD Canvas for Upright Billboard Labels */
-#hud-canvas {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 3;
-  pointer-events: none;
-}
-
-/* 3D Atmospheric Horizon Fog Gradient */
-#horizon-fog {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 150px;
-  z-index: 2;
-  pointer-events: none;
-  background: var(--fog-gradient);
-  opacity: 0;
-  transition: opacity 0.35s ease, background 0.3s ease;
-}
-
-#app-container.is-3d #horizon-fog {
+  visibility: visible;
   opacity: 1;
+  background: #080d16;
+}
+
+#navigation-map .maplibregl-canvas {
+  outline: none;
+}
+
+#navigation-map .maplibregl-ctrl-bottom-right {
+  right: 10px;
+  bottom: 82px;
+  z-index: 6;
+}
+
+#navigation-map .maplibregl-ctrl-attrib {
+  border-radius: 7px;
+  background: rgba(8, 13, 22, 0.78);
+  color: #cbd5e1;
+}
+
+#navigation-map .maplibregl-ctrl-attrib a {
+  color: #7dd3fc;
+}
+
+.navigation-map-state {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 13, 22, 0.9);
+  color: #e2e8f0;
+  font-size: 1rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.navigation-map-state[hidden] {
+  display: none;
+}
+
+.navigation-car-marker {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 3px solid #ffffff;
+  border-radius: 50%;
+  background: #0284c7;
+  box-shadow: 0 4px 18px rgba(2, 132, 199, 0.8);
+}
+
+.navigation-car-arrow {
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 16px solid #ffffff;
+  transform: translateY(-1px);
+}
+
+.road-direction-status {
+  position: absolute;
+  top: 94px;
+  left: 50%;
+  z-index: 12;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(82vw, 420px);
+  padding: 7px 14px;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  border-radius: 999px;
+  background: rgba(8, 13, 22, 0.86);
+  color: #e2e8f0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+.road-direction-status[hidden] {
+  display: none;
+}
+
+.road-direction-status.direction-with-flow {
+  border-color: rgba(34, 197, 94, 0.65);
+  color: #bbf7d0;
+}
+
+.road-direction-status.direction-against-flow {
+  border-color: rgba(239, 68, 68, 0.75);
+  color: #fecaca;
+  background: rgba(69, 10, 10, 0.9);
+}
+
+.direction-icon {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.route-guidance-status {
+  position: absolute;
+  top: 136px;
+  left: 50%;
+  z-index: 12;
+  transform: translateX(-50%);
+  max-width: min(82vw, 440px);
+  padding: 8px 15px;
+  border: 1px solid rgba(34, 211, 238, 0.6);
+  border-radius: 999px;
+  background: rgba(8, 47, 73, 0.9);
+  color: #cffafe;
+  font-size: 0.8rem;
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+.route-guidance-status[hidden] {
+  display: none;
+}
+
+.route-guidance-status.route-arriving {
+  border-color: rgba(34, 197, 94, 0.7);
+  background: rgba(20, 83, 45, 0.92);
+  color: #dcfce7;
 }
 
 /* Top Navigation Card (Waze Banner) */
@@ -495,6 +592,74 @@
   color: #fbbf24;
   font-size: 0.76rem;
   line-height: 1.35;
+}
+
+.navigation-route-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 2px;
+}
+
+.navigation-route-controls[hidden] {
+  display: none;
+}
+
+.navigation-route-controls > label {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+}
+
+.route-control-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 7px;
+}
+
+.route-control-row select,
+.route-control-row button {
+  min-height: 40px;
+  border: 1px solid var(--bg-card-border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.route-control-row select {
+  min-width: 0;
+  padding: 0 10px;
+}
+
+.route-control-row button {
+  padding: 0 13px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.route-control-row button:not(:disabled):hover {
+  border-color: rgba(34, 211, 238, 0.65);
+  color: #67e8f9;
+}
+
+.route-control-row button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+#navigation-route-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+[data-theme="light"] .route-control-row select,
+[data-theme="light"] .route-control-row button {
+  background: rgba(255, 255, 255, 0.72);
 }
 
 [data-theme="light"] .setting-requirement {
@@ -941,6 +1106,94 @@
   opacity: 1;
 }
 
+/* Full-screen server availability notice */
+.server-offline-notice {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(9, 13, 22, 0.88);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.25s ease, visibility 0s linear 0.25s;
+}
+
+.server-offline-notice.visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+.server-offline-card {
+  width: min(100%, 440px);
+  padding: 32px 28px;
+  text-align: center;
+  color: #f8fafc;
+  background: rgba(15, 23, 42, 0.94);
+  border: 1px solid rgba(239, 68, 68, 0.38);
+  border-radius: 22px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55), 0 0 32px rgba(239, 68, 68, 0.12);
+}
+
+.server-offline-icon {
+  width: 68px;
+  height: 68px;
+  margin: 0 auto 20px;
+  padding: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: 50%;
+}
+
+.server-offline-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.server-offline-card h1 {
+  margin: 0;
+  font-size: clamp(1.35rem, 5vw, 1.8rem);
+  line-height: 1.2;
+  letter-spacing: -0.3px;
+}
+
+.server-offline-card p {
+  margin: 12px 0 22px;
+  color: #94a3b8;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.server-reconnect-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #fbbf24;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.server-reconnect-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 9px currentColor;
+  animation: pulseDot 1.2s infinite ease-in-out;
+}
+
 /* Mobile Portrait Media Queries */
 @media (max-width: 640px) and (orientation: portrait), (max-width: 640px) and (max-aspect-ratio: 1/1) {
   #speedo-hud {
@@ -1030,6 +1283,17 @@
     font-size: 0.95rem;
   }
   #nav-subtitle {
+    font-size: 0.72rem;
+  }
+  .road-direction-status {
+    top: 54px;
+    padding: 5px 11px;
+    font-size: 0.7rem;
+  }
+
+  .route-guidance-status {
+    top: 88px;
+    padding: 5px 11px;
     font-size: 0.72rem;
   }
 

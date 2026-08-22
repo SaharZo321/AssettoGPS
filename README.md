@@ -93,6 +93,8 @@ Relevant upstream documentation:
 - Real-time AC shared-memory telemetry over WebSockets
 - Browser UI for phones, tablets, and secondary displays
 - Heading-up and north-up map modes
+- Fully local MapLibre Game Navigation aligned to SRP's native coordinates
+- Native SRP traffic-lane direction detection and directed landmark routing
 - SRP points of interest, junction guidance, and speed-camera warnings
 - Day/night display behavior and headlight synchronization
 - Mock telemetry mode for development without launching Assetto Corsa
@@ -108,12 +110,13 @@ Then open http://127.0.0.1:8080.
 Run the tests:
 
     uv run python -m unittest discover -s tests -v
+    uv run python scripts/verify_srp_routing.py
 
 Build and test the drag-and-drop Content Manager ZIP on Windows:
 
     ./scripts/build_release.ps1
 
-The output is build/AssettoGPS-0.2.0-beta.5.zip. The build script is only for
+The output is build/AssettoGPS-0.2.0-beta.16.zip. The build script is only for
 project maintainers; players install the resulting ZIP directly through Content
 Manager.
 
@@ -122,6 +125,7 @@ Manager.
 The release build performs:
 
 - backend unit tests;
+- SRP connector, connectivity, destination-reachability, and golden-route checks;
 - a PyInstaller standalone Windows build;
 - a real packaged-server startup in mock mode;
 - HTTP status and protected-control checks;

@@ -1,0 +1,15 @@
+SRP Navigation Map road data
+============================
+
+Copyright OpenStreetMap contributors.
+
+This offline extract is made available under the Open Data Commons Open
+Database License (ODbL) 1.0:
+https://opendatacommons.org/licenses/odbl/1-0/
+
+OpenStreetMap copyright and attribution information:
+https://www.openstreetmap.org/copyright
+
+This attribution applies to the retained OSM experiment only. Game Navigation
+uses the separate game-native traffic-lane prototype and does not load this
+OSM extract.

@@ -5,6 +5,7 @@
 class NavigationUI {
   constructor() {
     this.speedUnit = localStorage.getItem("gps_speed_unit") || "kmh"; // "kmh" or "mph"
+    this.mapCapabilities = { routing: false, activeRoute: false, mapMatching: false, directionDetection: false };
 
     // DOM cache
     this.navBanner = document.getElementById("nav-banner");
@@ -33,6 +34,15 @@ class NavigationUI {
     if (this.speedUnitLabel) {
       this.speedUnitLabel.innerText = this.speedUnit.toUpperCase();
     }
+  }
+
+  setMapCapabilities(capabilities = {}) {
+    this.mapCapabilities = {
+      routing: capabilities.routing === true,
+      activeRoute: capabilities.activeRoute === true,
+      mapMatching: capabilities.mapMatching === true,
+      directionDetection: capabilities.directionDetection === true,
+    };
   }
 
   update(frame) {
@@ -68,6 +78,16 @@ class NavigationUI {
         subtitle = carName.toUpperCase();
       } else {
         subtitle = "Live Navigation Active";
+      }
+    }
+
+    if ((instruction.alertLevel || "normal") === "normal") {
+      if (this.mapCapabilities.activeRoute) {
+        subtitle = "Game-lane route active";
+      } else if (this.mapCapabilities.routing) {
+        subtitle = "Game-aligned lanes - choose a destination";
+      } else {
+        subtitle = "Game-aligned lanes - routing unavailable";
       }
     }
 

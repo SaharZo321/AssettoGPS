@@ -5,23 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#0b0f19">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Assetto Corsa GPS Minimap</title>
   
   <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/vendor/maplibre-gl/maplibre-gl.css?v=5.24.0">
   <link rel="stylesheet" href="/css/waze-theme.css?v=43">
-  <link rel="stylesheet" href="/css/style.css?v=43">
+  <link rel="stylesheet" href="/css/style.css?v=47">
 </head>
 <body>
   <div id="app-container">
-    <!-- Map Canvas (3D Tilted Ground Plane) -->
-    <canvas id="map-canvas"></canvas>
-
-    <!-- Flat 2D HUD Canvas for Upright Billboard Labels (Zero Tilt Distortion) -->
-    <canvas id="hud-canvas"></canvas>
-
-    <!-- 3D Atmospheric Horizon Fog Gradient -->
-    <div id="horizon-fog"></div>
+    <!-- Offline game-native Navigation Map -->
+    <div id="navigation-map" aria-label="Offline SRP game-lane navigation map"></div>
+    <div id="navigation-map-state" class="navigation-map-state" role="status" hidden></div>
+    <div id="road-direction-status" class="road-direction-status direction-unknown" role="status" hidden>
+      <span class="direction-icon">.</span><span>Finding carriageway...</span>
+    </div>
+    <div id="route-guidance-status" class="route-guidance-status" role="status" hidden></div>
 
     <!-- Top Waze Navigation Banner -->
     <div id="nav-banner" class="glass-card">
@@ -122,6 +123,24 @@
         </div>
 
         <div class="modal-body">
+          <!-- Route Guidance -->
+          <div class="setting-group">
+            <div class="setting-group-header">
+              <span class="setting-group-title">ROUTE GUIDANCE</span>
+            </div>
+            <div id="navigation-route-controls" class="navigation-route-controls">
+              <label for="navigation-destination">ROUTE DESTINATION</label>
+              <div class="route-control-row">
+                <select id="navigation-destination" aria-label="Route destination">
+                  <option value="">Choose a destination...</option>
+                </select>
+                <button id="btn-start-route" type="button" disabled>Start</button>
+                <button id="btn-clear-route" type="button" hidden>Clear</button>
+              </div>
+              <p id="navigation-route-note">Choose an SRP landmark; routes follow directed game traffic lanes.</p>
+            </div>
+          </div>
+
           <!-- Theme Setting -->
           <div class="setting-group">
             <div class="setting-group-header">
@@ -322,13 +341,42 @@
 
     <!-- Interactive Toast Notification -->
     <div id="app-toast" class="toast-notification" aria-live="polite"></div>
+
+    <!-- Remains visible after the local server stops and the WebSocket closes. -->
+    <div
+      id="server-offline-notice"
+      class="server-offline-notice"
+      role="status"
+      aria-live="assertive"
+      aria-hidden="true"
+    >
+      <div class="server-offline-card">
+        <div class="server-offline-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5.1 5.1a16 16 0 0 1 14.8 0" />
+            <path d="M8.5 8.5a11 11 0 0 1 7 0" />
+            <path d="M9.7 14.3a4 4 0 0 1 4.6 0" />
+            <circle cx="12" cy="18" r="1" fill="currentColor" stroke="none" />
+            <path d="M3 3l18 18" />
+          </svg>
+        </div>
+        <h1>AC / GPS server is not running</h1>
+        <p>Start Assetto Corsa and open the Assetto GPS app.</p>
+        <div class="server-reconnect-status">
+          <span class="server-reconnect-dot" aria-hidden="true"></span>
+          <span>Waiting to reconnect&hellip;</span>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Scripts -->
   <script src="/js/audio-alerts.js?v=43"></script>
   <script src="/js/interpolation.js?v=43"></script>
-  <script src="/js/map-renderer.js?v=43"></script>
-  <script src="/js/navigation-ui.js?v=43"></script>
-  <script src="/js/app.js?v=43"></script>
+  <script src="/vendor/maplibre-gl/maplibre-gl.js?v=5.24.0"></script>
+  <script src="/js/navigation-map-renderer.js?v=57"></script>
+  <script src="/js/navigation-controller.js?v=2"></script>
+  <script src="/js/navigation-ui.js?v=45"></script>
+  <script src="/js/app.js?v=50"></script>
 </body>
 </html>

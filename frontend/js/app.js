@@ -8,12 +8,19 @@ class App {
     this.reconnectTimer = null;
     this.wakeLock = null;
 
-    this.renderer = new MapRenderer("map-canvas");
+    this.renderer = new NavigationController("navigation-map");
     this.interpolator = window.motionInterpolator;
     this.ui = window.navUI;
     this.audio = window.audioAlerts;
 
     this.setupEventListeners();
+    this.renderer.readyPromise
+      .then(() => this.updateNavigationUi())
+      .catch((error) => {
+        console.error("Navigation Map failed to initialize", error);
+        this.updateNavigationUi(error.message || String(error));
+        this.showToast("Navigation Map could not start.");
+      });
     this.requestWakeLock();
     this.connectWebSocket();
     this.startLoop();
@@ -43,6 +50,7 @@ class App {
     this.ws.onopen = () => {
       console.log("Connected to Assetto Corsa GPS Server");
       this.updateConnectionStatus(true);
+      this.updateServerOfflineNotice(false);
     };
 
     this.ws.onmessage = (event) => {
@@ -52,7 +60,8 @@ class App {
         this.ui.update(frame);
 
         if (frame.trackInfo) {
-          this.renderer.setTrackInfo(frame.trackInfo, frame.track);
+          const supportChanged = this.renderer.setTrackInfo(frame.trackInfo, frame.track);
+          if (supportChanged) this.updateNavigationUi();
         }
 
         if (frame.environment) {
@@ -66,13 +75,15 @@ class App {
 
     this.ws.onclose = () => {
       console.log("WebSocket disconnected, reconnecting in 2s...");
-      this.updateConnectionStatus(false, true);
+      this.updateConnectionStatus(false);
+      this.updateServerOfflineNotice(true);
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = setTimeout(() => this.connectWebSocket(), 2000);
     };
 
     this.ws.onerror = () => {
       this.updateConnectionStatus(false);
+      this.updateServerOfflineNotice(true);
       this.ws.close();
     };
   }
@@ -91,8 +102,15 @@ class App {
       text.innerText = "Reconnecting...";
     } else {
       badge.classList.add("status-disconnected");
-      text.innerText = "Offline";
+      text.innerText = "Server not running";
     }
+  }
+
+  updateServerOfflineNotice(visible) {
+    const notice = document.getElementById("server-offline-notice");
+    if (!notice) return;
+    notice.classList.toggle("visible", visible);
+    notice.setAttribute("aria-hidden", visible ? "false" : "true");
   }
 
   showToast(message) {
@@ -148,7 +166,67 @@ class App {
     });
   }
 
+  updateNavigationUi(error = null) {
+    const capabilities = this.renderer.capabilities;
+    if (this.ui && typeof this.ui.setMapCapabilities === "function") {
+      this.ui.setMapCapabilities(capabilities);
+    }
+    if (capabilities.routing) {
+      this.populateRouteDestinations();
+      if (!capabilities.activeRoute) this.updateRouteUi();
+    } else {
+      const select = document.getElementById("navigation-destination");
+      if (select) select.replaceChildren(new Option("Choose a destination...", ""));
+      const startButton = document.getElementById("btn-start-route");
+      if (startButton) startButton.disabled = true;
+    }
+    if (capabilities.unsupportedTrack) {
+      this.updateRouteUi({ error: "Route guidance is available on SRP tracks only." });
+    }
+    if (error) this.updateRouteUi({ error: `Navigation Map could not start (${error}).` });
+  }
+
+  populateRouteDestinations() {
+    const select = document.getElementById("navigation-destination");
+    if (!select) return;
+    const currentValue = select.value;
+    const destinations = this.renderer.getDestinations();
+    const existing = Array.from(select.options).slice(1).map((option) => option.value);
+    if (existing.length !== destinations.length || existing.some((name, index) => name !== destinations[index])) {
+      select.replaceChildren(new Option("Choose a destination...", ""));
+      destinations.forEach((name) => select.add(new Option(name, name)));
+      if (destinations.includes(currentValue)) select.value = currentValue;
+    }
+    const startButton = document.getElementById("btn-start-route");
+    if (startButton) startButton.disabled = !select.value;
+  }
+
+  updateRouteUi(detail = {}) {
+    const note = document.getElementById("navigation-route-note");
+    const clearButton = document.getElementById("btn-clear-route");
+    if (clearButton) clearButton.hidden = detail.active !== true;
+    if (!note) return;
+    if (detail.error) {
+      note.innerText = detail.error;
+      return;
+    }
+    if (detail.active) {
+      const distance = detail.distanceM >= 1000
+        ? `${(detail.distanceM / 1000).toFixed(1)} km`
+        : `${Math.round(detail.distanceM)} m`;
+      note.innerText = `Route to ${detail.destination} - ${distance}.`;
+    } else {
+      note.innerText = "Choose an SRP landmark for game-native directed routing.";
+    }
+  }
+
   setupEventListeners() {
+    // Recenter the MapLibre camera after manual pan or rotation.
+    const btnRecenter = document.getElementById("btn-recenter");
+    if (btnRecenter) {
+      btnRecenter.addEventListener("click", () => this.renderer.recenter());
+    }
+
     // Orientation button (Heading-up vs North-up) with clean SVGs
     const btnOrientation = document.getElementById("btn-orientation");
     const ORIENTATION_ICONS = {
@@ -165,10 +243,17 @@ class App {
     };
 
     if (btnOrientation) {
-      btnOrientation.innerHTML = ORIENTATION_ICONS[this.renderer.orientationMode] || ORIENTATION_ICONS.headingUp;
+      const updateOrientationButton = (mode) => {
+        btnOrientation.innerHTML = ORIENTATION_ICONS[mode] || ORIENTATION_ICONS.headingUp;
+        const label = mode === "northUp" ? "Map orientation: North Up" : "Map orientation: Heading Up";
+        btnOrientation.title = label;
+        btnOrientation.setAttribute("aria-label", label);
+        btnOrientation.classList.toggle("active", mode === "northUp");
+      };
+      updateOrientationButton(this.renderer.orientationMode);
       btnOrientation.addEventListener("click", () => {
         const mode = this.renderer.toggleOrientation();
-        btnOrientation.innerHTML = ORIENTATION_ICONS[mode];
+        updateOrientationButton(mode);
       });
     }
 
@@ -230,6 +315,40 @@ class App {
         closeSettings();
       }
     });
+
+    this.updateNavigationUi();
+    window.addEventListener("gps-navigation-route-changed", (event) => {
+      this.updateRouteUi(event.detail || {});
+      if (this.ui && typeof this.ui.setMapCapabilities === "function") {
+        this.ui.setMapCapabilities(this.renderer.capabilities);
+      }
+    });
+
+    const destinationSelect = document.getElementById("navigation-destination");
+    const startRouteButton = document.getElementById("btn-start-route");
+    const clearRouteButton = document.getElementById("btn-clear-route");
+    if (destinationSelect) {
+      destinationSelect.addEventListener("change", () => {
+        if (startRouteButton) startRouteButton.disabled = !destinationSelect.value;
+      });
+    }
+    if (startRouteButton && destinationSelect) {
+      startRouteButton.addEventListener("click", () => {
+        const result = this.renderer.startRoute(destinationSelect.value);
+        if (result.error) {
+          this.updateRouteUi(result);
+          this.showToast(result.error);
+        } else {
+          this.showToast(`Route to ${result.destination} started.`);
+        }
+      });
+    }
+    if (clearRouteButton) {
+      clearRouteButton.addEventListener("click", () => {
+        this.renderer.clearRoute();
+        this.showToast("Route cleared.");
+      });
+    }
 
     // 1. Display Theme Segmented Control (Night / Day / Auto)
     const currentThemeMode = this.renderer.themeMode || "auto";
