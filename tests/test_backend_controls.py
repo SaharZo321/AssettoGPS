@@ -292,6 +292,21 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertIn("this.updateRouteProgress(routeMatches)", renderer)
         self.assertNotIn("this.updateRouteProgress(this.lastMarkerPoint)", renderer)
 
+    def test_recenter_button_targets_the_active_map_mode(self):
+        app = (server.FRONTEND_DIR / "js" / "app.js").read_text(encoding="utf-8")
+        simple = (
+            server.FRONTEND_DIR / "js" / "map-renderer.js"
+        ).read_text(encoding="utf-8")
+        navigation = (
+            server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('getElementById("btn-recenter")', app)
+        self.assertIn('addEventListener("click", () => this.renderer.recenter())', app)
+        self.assertNotIn('addEventListener("click", () => this.recenter())', simple)
+        self.assertIn('center: this.displayPoint', navigation)
+        self.assertIn('this.orientationMode === "headingUp" ? this.displayBearing : 0', navigation)
+
     def test_navigation_auto_zoom_is_twenty_five_percent_closer(self):
         renderer = (
             server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"

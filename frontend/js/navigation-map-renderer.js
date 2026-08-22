@@ -831,6 +831,13 @@ class NavigationMapRenderer {
   recenter() {
     this.isFreeBrowsing = false;
     this.updateRecenterButton(false);
+    if (this.map && this.displayPoint && this.displayBearing !== null) {
+      this.map.jumpTo({
+        center: this.displayPoint,
+        bearing: this.orientationMode === "headingUp" ? this.displayBearing : 0,
+        pitch: this.tiltAngle,
+      });
+    }
   }
 
   toggleOrientation() {

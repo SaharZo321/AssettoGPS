@@ -61,9 +61,6 @@ class MapRenderer {
     this.setTheme(this.themeMode);
 
     this.recenterBtn = document.getElementById("btn-recenter");
-    if (this.recenterBtn) {
-      this.recenterBtn.addEventListener("click", () => this.recenter());
-    }
 
     this.setTiltAngle(this.tiltAngle, false);
     this.resize();

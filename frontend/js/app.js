@@ -211,6 +211,13 @@ class App {
   }
 
   setupEventListeners() {
+    // Recenter belongs to the active map mode. Binding it inside the SVG
+    // renderer made the same button reset the hidden map in Navigation mode.
+    const btnRecenter = document.getElementById("btn-recenter");
+    if (btnRecenter) {
+      btnRecenter.addEventListener("click", () => this.renderer.recenter());
+    }
+
     // Orientation button (Heading-up vs North-up) with clean SVGs
     const btnOrientation = document.getElementById("btn-orientation");
     const ORIENTATION_ICONS = {
