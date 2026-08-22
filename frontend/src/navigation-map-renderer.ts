@@ -4,10 +4,170 @@
  * MapLibre renders SRP's own directed traffic lanes in game coordinates.
  */
 
+type LngLat = [number, number];
+type Coordinate = LngLat | [number, number, number];
+type PointLike = readonly [number, number, ...number[]];
+type LaneId = string | number;
+type MapLibreGlobal = typeof import('maplibre-gl');
+type MapLibreMap = import('maplibre-gl').Map;
+type MapLibreMarker = import('maplibre-gl').Marker;
+type MapLibreGeoJSONSource = import('maplibre-gl').GeoJSONSource;
+type MapLibreMapEvent = import('maplibre-gl').MapLibreEvent;
+type MapLibrePadding = import('maplibre-gl').PaddingOptions;
+type MapLibreStyle = import('maplibre-gl').StyleSpecification;
+
+interface ProjectionConfig {
+  origin?: LngLat;
+  metersPerLongitudeDegree?: number | string;
+  metersPerLatitudeDegree?: number | string;
+  longitudeAxis?: string;
+  latitudeAxis?: string;
+}
+
+interface LaneProperties {
+  lane_id?: LaneId;
+  osm_id?: LaneId;
+  oneway?: string | number | boolean;
+  role?: number;
+  role_name?: string;
+  connector?: boolean;
+  from_lane_id?: LaneId;
+  to_lane_id?: LaneId;
+  intersection_id?: LaneId;
+  [key: string]: unknown;
+}
+
+interface LineStringGeometry {
+  type?: "LineString";
+  coordinates: Coordinate[];
+}
+
+interface LaneFeature {
+  type?: "Feature";
+  properties: LaneProperties;
+  geometry: LineStringGeometry;
+}
+
+interface SourceDestination {
+  name: string;
+  ac: [number, number];
+}
+
+type RouteConnection = [number, number, number, number, number, number, LaneId, LaneId, LaneId, ...unknown[]];
+
+interface LaneFeatureCollection {
+  type?: "FeatureCollection";
+  features?: LaneFeature[];
+  coordinateSpace?: ProjectionConfig;
+  destinations?: SourceDestination[];
+  disallowedTransitions?: [LaneId, LaneId][];
+  routeConnections?: RouteConnection[];
+}
+
+type RouteLineFeatureCollection = import('geojson').FeatureCollection<
+  import('geojson').LineString,
+  Record<string, never>
+>;
+
+interface RoadSegment {
+  from: Coordinate;
+  to: Coordinate;
+  fromElevation: number;
+  toElevation: number;
+  wayId: LaneId | undefined;
+  key: string;
+  oneWay: boolean;
+  properties: LaneProperties;
+}
+
+interface SegmentProjection {
+  point: LngLat;
+  distance: number;
+  elevation: number;
+  amount: number;
+}
+
+interface MatchDraft extends SegmentProjection {
+  score: number;
+  roadBearing: number;
+  directionDifference: number;
+  elevationDifference: number;
+  wayId: LaneId | undefined;
+  segmentKey: string;
+  segmentFrom: Coordinate;
+  segmentTo: Coordinate;
+  oneWay: boolean;
+  properties: LaneProperties;
+  withFlow?: boolean;
+  alignedBearing?: number;
+}
+
+interface RoadMatch extends MatchDraft {
+  withFlow: boolean;
+  alignedBearing: number;
+}
+
+interface GraphEdge { to: string; distance: number; properties: LaneProperties }
+interface GraphNode { point: Coordinate; edges: GraphEdge[] }
+
+interface LaneEndpoint {
+  laneId: LaneId | undefined;
+  start: Coordinate;
+  end: Coordinate;
+  startBearing: number;
+  endBearing: number;
+}
+
+interface NearbyNode { key: string; distance: number }
+type HeapItem = [priority: number, key: string, distance: number];
+
+interface RouteData {
+  coordinates: Coordinate[];
+  nodeKeys: Array<string | null>;
+  remaining: number[];
+  distanceM: number;
+  startSnapDistanceM: number;
+  startSegmentRemainingM: number;
+  destinationSnapDistanceM: number;
+}
+
+interface RouteProgress { index: number; point: LngLat; amount: number }
+interface Destination { name: string; point: LngLat }
+interface RoutePlan { route: RouteData; match: RoadMatch; score: number }
+
+interface RouteActiveDetail {
+  active: true;
+  destination: string;
+  distanceM: number;
+  nodeCount: number;
+  recalculated: boolean;
+}
+
+interface RouteInactiveDetail { active: false }
+type SetDestinationResult = RouteActiveDetail | { error: string };
+
+interface TelemetryInterpolator {
+  currentPos: [number, number, number, ...number[]] | null;
+  currentHeading: number;
+  currentSpeed: number;
+}
+
+interface Window {
+  maplibregl?: MapLibreGlobal;
+  SrpGameProjection: typeof SrpGameProjection;
+  DirectedRoadMatcher: typeof DirectedRoadMatcher;
+  DirectedRoadGraph: typeof DirectedRoadGraph;
+  NavigationMapRenderer: typeof NavigationMapRenderer;
+}
+
 const SRP_NAVIGATION_AUTO_ZOOM_SCALE = 1.25;
 
 class SrpGameProjection {
-  constructor(config) {
+  readonly origin: LngLat;
+  readonly metersPerLongitudeDegree: number;
+  readonly metersPerLatitudeDegree: number;
+
+  constructor(config: ProjectionConfig) {
     this.origin = config.origin || [139.75, 35.6];
     this.metersPerLongitudeDegree = Number(config.metersPerLongitudeDegree);
     this.metersPerLatitudeDegree = Number(config.metersPerLatitudeDegree);
@@ -22,14 +182,14 @@ class SrpGameProjection {
     }
   }
 
-  toLngLat(x, z) {
+  toLngLat(x: number, z: number): LngLat {
     return [
       this.origin[0] + x / this.metersPerLongitudeDegree,
       this.origin[1] - z / this.metersPerLatitudeDegree,
     ];
   }
 
-  headingToBearing(x, z, headingRadians) {
+  headingToBearing(x: number, z: number, headingRadians: number): number {
     const origin = this.toLngLat(x, z);
     const ahead = this.toLngLat(
       x + Math.sin(headingRadians) * 25,
@@ -40,7 +200,14 @@ class SrpGameProjection {
 }
 
 class DirectedRoadMatcher {
-  constructor(featureCollection) {
+  readonly cellSize: number;
+  readonly cells: Map<string, RoadSegment[]>;
+  previousWayId: LaneId | null | undefined;
+  previousSegmentKey: string | null;
+  previousPoint: LngLat | null;
+  previousInputPoint: LngLat | null;
+
+  constructor(featureCollection: LaneFeatureCollection) {
     this.cellSize = 0.004;
     this.cells = new Map();
     this.previousWayId = null;
@@ -50,28 +217,28 @@ class DirectedRoadMatcher {
     this.buildIndex(featureCollection);
   }
 
-  resetContinuity() {
+  resetContinuity(): void {
     this.previousWayId = null;
     this.previousSegmentKey = null;
     this.previousPoint = null;
     this.previousInputPoint = null;
   }
 
-  static normalizeAngle(angle) {
+  static normalizeAngle(angle: number): number {
     let value = angle % 360;
     if (value > 180) value -= 360;
     if (value < -180) value += 360;
     return value;
   }
 
-  static bearing(from, to) {
+  static bearing(from: PointLike, to: PointLike): number {
     const averageLatitude = ((from[1] + to[1]) * Math.PI) / 360;
     const east = (to[0] - from[0]) * Math.cos(averageLatitude);
     const north = to[1] - from[1];
     return (Math.atan2(east, north) * 180) / Math.PI;
   }
 
-  static distance(from, to) {
+  static distance(from: PointLike, to: PointLike): number {
     const averageLatitude = ((from[1] + to[1]) * Math.PI) / 360;
     return Math.hypot(
       (from[0] - to[0]) * 111320 * Math.cos(averageLatitude),
@@ -79,24 +246,26 @@ class DirectedRoadMatcher {
     );
   }
 
-  cellKey(x, y) {
+  cellKey(x: number, y: number): string {
     return `${x}:${y}`;
   }
 
-  buildIndex(featureCollection) {
+  buildIndex(featureCollection: LaneFeatureCollection): void {
     for (const feature of featureCollection.features || []) {
       const originalCoordinates = feature.geometry?.coordinates || [];
       const oneway = String(feature.properties?.oneway || "").toLowerCase();
       const coordinates = oneway === "-1" ? [...originalCoordinates].reverse() : originalCoordinates;
       const laneId = feature.properties?.lane_id ?? feature.properties?.osm_id;
       for (let index = 0; index < coordinates.length - 1; index += 1) {
-        const segment = {
-          from: coordinates[index],
-          to: coordinates[index + 1],
-          fromElevation: Number(coordinates[index][2]) || 0,
-          toElevation: Number(coordinates[index + 1][2]) || 0,
+        const from = coordinates[index]!;
+        const to = coordinates[index + 1]!;
+        const segment: RoadSegment = {
+          from,
+          to,
+          fromElevation: Number(from[2]) || 0,
+          toElevation: Number(to[2]) || 0,
           wayId: laneId,
-          key: `${laneId}:${index}:${coordinates[index][0]}:${coordinates[index][1]}`,
+          key: `${laneId}:${index}:${from[0]}:${from[1]}`,
           oneWay: ["yes", "1", "true", "-1"].includes(oneway),
           properties: feature.properties,
         };
@@ -108,14 +277,14 @@ class DirectedRoadMatcher {
           for (let y = minY; y <= maxY; y += 1) {
             const key = this.cellKey(x, y);
             if (!this.cells.has(key)) this.cells.set(key, []);
-            this.cells.get(key).push(segment);
+            this.cells.get(key)!.push(segment);
           }
         }
       }
     }
   }
 
-  project(point, segment) {
+  project(point: LngLat, segment: RoadSegment): SegmentProjection {
     const latitudeRadians = (point[1] * Math.PI) / 180;
     const longitudeScale = 111320 * Math.cos(latitudeRadians);
     const latitudeScale = 111320;
@@ -133,18 +302,18 @@ class DirectedRoadMatcher {
       point: [
         point[0] + east / longitudeScale,
         point[1] + north / latitudeScale,
-      ],
+      ] as LngLat,
       distance: Math.hypot(east, north),
       elevation: segment.fromElevation + (segment.toElevation - segment.fromElevation) * amount,
       amount,
     };
   }
 
-  candidates(point, radius = 2) {
+  candidates(point: LngLat, radius = 2): RoadSegment[] {
     const centerX = Math.floor(point[0] / this.cellSize);
     const centerY = Math.floor(point[1] / this.cellSize);
-    const segments = [];
-    const seen = new Set();
+    const segments: RoadSegment[] = [];
+    const seen = new Set<string>();
     for (let x = centerX - radius; x <= centerX + radius; x += 1) {
       for (let y = centerY - radius; y <= centerY + radius; y += 1) {
         for (const segment of this.cells.get(this.cellKey(x, y)) || []) {
@@ -159,8 +328,8 @@ class DirectedRoadMatcher {
     return segments;
   }
 
-  match(point, vehicleBearing, vehicleElevation = null) {
-    let best = null;
+  match(point: LngLat, vehicleBearing: number, vehicleElevation: number | null = null): RoadMatch | null {
+    let best: MatchDraft | null = null;
     for (const segment of this.candidates(point)) {
       const projection = this.project(point, segment);
       const roadBearing = DirectedRoadMatcher.bearing(segment.from, segment.to);
@@ -211,11 +380,15 @@ class DirectedRoadMatcher {
     best.alignedBearing = DirectedRoadMatcher.normalizeAngle(
       best.roadBearing + (best.directionDifference > 90 ? 180 : 0)
     );
-    return best;
+    return best as RoadMatch;
   }
 
-  routeCandidates(point, vehicleBearing, vehicleElevation = null) {
-    const candidates = [];
+  routeCandidates(
+    point: LngLat,
+    vehicleBearing: number,
+    vehicleElevation: number | null = null
+  ): RoadMatch[] {
+    const candidates: RoadMatch[] = [];
     for (const segment of this.candidates(point)) {
       const projection = this.project(point, segment);
       const roadBearing = DirectedRoadMatcher.bearing(segment.from, segment.to);
@@ -252,7 +425,10 @@ class DirectedRoadMatcher {
 }
 
 class DirectedRoadGraph {
-  constructor(featureCollection) {
+  readonly nodes: Map<string, GraphNode>;
+  readonly disallowedTransitions: Set<string>;
+
+  constructor(featureCollection: LaneFeatureCollection) {
     this.nodes = new Map();
     this.disallowedTransitions = new Set(
       (featureCollection.disallowedTransitions || []).map((pair) => pair.join(':'))
@@ -260,11 +436,11 @@ class DirectedRoadGraph {
     this.build(featureCollection);
   }
 
-  key(point) {
+  key(point: PointLike): string {
     return `${Number(point[0]).toFixed(7)},${Number(point[1]).toFixed(7)},${Number(point[2] || 0).toFixed(2)}`;
   }
 
-  distance(from, to) {
+  distance(from: PointLike, to: PointLike): number {
     const averageLatitude = ((from[1] + to[1]) * Math.PI) / 360;
     return Math.hypot(
       (from[0] - to[0]) * 111320 * Math.cos(averageLatitude),
@@ -272,7 +448,7 @@ class DirectedRoadGraph {
     );
   }
 
-  project(point, from, to) {
+  project(point: LngLat, from: Coordinate, to: Coordinate): Pick<RouteProgress, "point" | "amount"> {
     const latitudeRadians = (point[1] * Math.PI) / 180;
     const longitudeScale = 111320 * Math.cos(latitudeRadians);
     const latitudeScale = 111320;
@@ -290,48 +466,52 @@ class DirectedRoadGraph {
       point: [
         point[0] + (ax + dx * amount) / longitudeScale,
         point[1] + (ay + dy * amount) / latitudeScale,
-      ],
+      ] as LngLat,
       amount,
     };
   }
 
-  ensureNode(point) {
+  ensureNode(point: Coordinate): string {
     const key = this.key(point);
     if (!this.nodes.has(key)) this.nodes.set(key, { point, edges: [] });
     return key;
   }
 
-  addEdge(from, to, properties) {
+  addEdge(from: Coordinate, to: Coordinate, properties: LaneProperties): void {
     const fromKey = this.ensureNode(from);
     const toKey = this.ensureNode(to);
-    this.nodes.get(fromKey).edges.push({
+    this.nodes.get(fromKey)!.edges.push({
       to: toKey,
       distance: this.distance(from, to),
       properties,
     });
   }
 
-  build(featureCollection) {
-    const endpoints = [];
+  build(featureCollection: LaneFeatureCollection): void {
+    const endpoints: LaneEndpoint[] = [];
     for (const feature of featureCollection.features || []) {
       const original = feature.geometry?.coordinates || [];
       if (original.length < 2) continue;
       const laneId = feature.properties?.lane_id;
+      const start = original[0]!;
+      const end = original[original.length - 1]!;
       endpoints.push({
         laneId,
-        start: original[0],
-        end: original[original.length - 1],
-        startBearing: DirectedRoadMatcher.bearing(original[0], original[1]),
+        start,
+        end,
+        startBearing: DirectedRoadMatcher.bearing(start, original[1]!),
         endBearing: DirectedRoadMatcher.bearing(
-          original[original.length - 2], original[original.length - 1]
+          original[original.length - 2]!, end
         ),
       });
       const oneway = String(feature.properties?.oneway || "yes").toLowerCase();
       const coordinates = oneway === "-1" ? [...original].reverse() : original;
       for (let index = 0; index < coordinates.length - 1; index += 1) {
-        this.addEdge(coordinates[index], coordinates[index + 1], feature.properties);
+        const from = coordinates[index]!;
+        const to = coordinates[index + 1]!;
+        this.addEdge(from, to, feature.properties);
         if (!["yes", "1", "true", "-1"].includes(oneway)) {
-          this.addEdge(coordinates[index + 1], coordinates[index], feature.properties);
+          this.addEdge(to, from, feature.properties);
         }
       }
     }
@@ -343,12 +523,12 @@ class DirectedRoadGraph {
     }
   }
 
-  connectIntersectionRoutes(connections) {
+  connectIntersectionRoutes(connections: RouteConnection[]): void {
     for (const connection of connections) {
       if (!Array.isArray(connection) || connection.length < 9) continue;
       this.addEdge(
-        connection.slice(0, 3),
-        connection.slice(3, 6),
+        connection.slice(0, 3) as Coordinate,
+        connection.slice(3, 6) as Coordinate,
         {
           connector: true,
           from_lane_id: connection[6],
@@ -359,7 +539,7 @@ class DirectedRoadGraph {
     }
   }
 
-  connectLaneEndpoints(endpoints) {
+  connectLaneEndpoints(endpoints: LaneEndpoint[]): void {
     for (const exit of endpoints) {
       for (const entrance of endpoints) {
         if (exit.laneId === entrance.laneId) continue;
@@ -383,8 +563,8 @@ class DirectedRoadGraph {
     }
   }
 
-  nearestNode(point) {
-    let nearestKey = null;
+  nearestNode(point: LngLat): { key: string | null; distance: number } {
+    let nearestKey: string | null = null;
     let nearestDistance = Infinity;
     for (const [key, node] of this.nodes) {
       const distance = this.distance(point, node.point);
@@ -396,8 +576,8 @@ class DirectedRoadGraph {
     return { key: nearestKey, distance: nearestDistance };
   }
 
-  nearbyDestinationNodes(point, extraDistance = 75) {
-    const candidates = [];
+  nearbyDestinationNodes(point: LngLat, extraDistance = 75): NearbyNode[] {
+    const candidates: NearbyNode[] = [];
     let nearestDistance = Infinity;
     for (const [key, node] of this.nodes) {
       const distance = this.distance(point, node.point);
@@ -408,21 +588,21 @@ class DirectedRoadGraph {
     return candidates.filter((candidate) => candidate.distance <= threshold);
   }
 
-  pushHeap(heap, item) {
+  pushHeap(heap: HeapItem[], item: HeapItem): void {
     heap.push(item);
     let index = heap.length - 1;
     while (index > 0) {
       const parent = Math.floor((index - 1) / 2);
-      if (heap[parent][0] <= item[0]) break;
-      heap[index] = heap[parent];
+      if (heap[parent]![0] <= item[0]) break;
+      heap[index] = heap[parent]!;
       index = parent;
     }
     heap[index] = item;
   }
 
-  popHeap(heap) {
+  popHeap(heap: HeapItem[]): HeapItem | null {
     if (!heap.length) return null;
-    const root = heap[0];
+    const root = heap[0]!;
     const last = heap.pop();
     if (heap.length && last) {
       let index = 0;
@@ -430,9 +610,9 @@ class DirectedRoadGraph {
         const left = index * 2 + 1;
         const right = left + 1;
         if (left >= heap.length) break;
-        const child = right < heap.length && heap[right][0] < heap[left][0] ? right : left;
-        if (heap[child][0] >= last[0]) break;
-        heap[index] = heap[child];
+        const child = right < heap.length && heap[right]![0] < heap[left]![0] ? right : left;
+        if (heap[child]![0] >= last[0]) break;
+        heap[index] = heap[child]!;
         index = child;
       }
       heap[index] = last;
@@ -440,7 +620,11 @@ class DirectedRoadGraph {
     return root;
   }
 
-  route(startPoint, destinationPoint, startMatch = null) {
+  route(
+    startPoint: LngLat,
+    destinationPoint: LngLat,
+    startMatch: RoadMatch | null = null
+  ): RouteData | null {
     if (!startMatch?.segmentTo) return null;
     const matchedStartKey = this.key(startMatch.segmentTo);
     if (!this.nodes.has(matchedStartKey)) return null;
@@ -454,24 +638,24 @@ class DirectedRoadGraph {
       return null;
     }
 
-    const destinationByKey = new Map(
+    const destinationByKey = new Map<string, NearbyNode>(
       destinations.map((destination) => [destination.key, destination])
     );
-    const distances = new Map([[start.key, start.distance]]);
-    const previous = new Map();
-    const queue = [];
+    const distances = new Map<string, number>([[start.key, start.distance]]);
+    const previous = new Map<string, string>();
+    const queue: HeapItem[] = [];
     this.pushHeap(queue, [start.distance, start.key, start.distance]);
-    let destination = null;
+    let destination: NearbyNode | null = null;
     let bestDestinationScore = Infinity;
 
     while (queue.length) {
-      const current = this.popHeap(queue);
+      const current = this.popHeap(queue)!;
       const currentKey = current[1];
       const currentDistance = current[2];
       if (currentDistance !== distances.get(currentKey)) continue;
       if (currentDistance > bestDestinationScore) break;
       if (destinationByKey.has(currentKey)) {
-        const candidateDestination = destinationByKey.get(currentKey);
+        const candidateDestination = destinationByKey.get(currentKey)!;
         // Prefer finishing close to the landmark, but allow a nearby
         // reachable carriageway when the geometrically closest one is inbound.
         const destinationScore = currentDistance + candidateDestination.distance * 3;
@@ -481,7 +665,7 @@ class DirectedRoadGraph {
         }
       }
 
-      const node = this.nodes.get(currentKey);
+      const node = this.nodes.get(currentKey)!;
       for (const edge of node.edges) {
         const candidate = currentDistance + edge.distance;
         if (candidate >= (distances.get(edge.to) ?? Infinity)) continue;
@@ -492,8 +676,8 @@ class DirectedRoadGraph {
     }
 
     if (!destination || !distances.has(destination.key)) return null;
-    const keys = [];
-    let key = destination.key;
+    const keys: string[] = [];
+    let key: string | undefined = destination.key;
     while (key) {
       keys.push(key);
       if (key === start.key) break;
@@ -501,21 +685,22 @@ class DirectedRoadGraph {
     }
     if (keys[keys.length - 1] !== start.key) return null;
     keys.reverse();
-    const coordinates = keys.map((nodeKey) => this.nodes.get(nodeKey).point);
-    const nodeKeys = [...keys];
-    if (start.routeOrigin && this.distance(start.routeOrigin, coordinates[0]) > 0.05) {
+    const coordinates: Coordinate[] = keys.map((nodeKey) => this.nodes.get(nodeKey)!.point);
+    const nodeKeys: Array<string | null> = [...keys];
+    if (start.routeOrigin && this.distance(start.routeOrigin, coordinates[0]!) > 0.05) {
       coordinates.unshift(start.routeOrigin);
       nodeKeys.unshift(null);
     }
     const remaining = new Array(coordinates.length).fill(0);
     for (let index = coordinates.length - 2; index >= 0; index -= 1) {
-      remaining[index] = remaining[index + 1] + this.distance(coordinates[index], coordinates[index + 1]);
+      remaining[index] = remaining[index + 1]!
+        + this.distance(coordinates[index]!, coordinates[index + 1]!);
     }
     return {
       coordinates,
       nodeKeys,
       remaining,
-      distanceM: distances.get(destination.key),
+      distanceM: distances.get(destination.key)!,
       startSnapDistanceM: Number(startMatch.distance) || 0,
       startSegmentRemainingM: start.distance,
       destinationSnapDistanceM: destination.distance,
@@ -524,7 +709,56 @@ class DirectedRoadGraph {
 }
 
 class NavigationMapRenderer {
-  constructor(containerId) {
+  readonly container: HTMLElement | null;
+  map: MapLibreMap | null;
+  marker: MapLibreMarker | null;
+  projection: SrpGameProjection | null;
+  matcher: DirectedRoadMatcher | null;
+  graph: DirectedRoadGraph | null;
+  destinations: Destination[];
+  activeRoute: RouteData | null;
+  destination: Destination | null;
+  routeProgressIndex: number;
+  routeProgressAmount: number;
+  lastRouteProgressUpdate: number;
+  offRouteSince: number;
+  lastRerouteAttempt: number;
+  readonly routeRecalculationDelayMs: number;
+  readonly routeRecalculationCooldownMs: number;
+  lastMarkerPoint: LngLat | null;
+  lastGamePoint: LngLat | null;
+  displayPoint: LngLat | null;
+  displayBearing: number | null;
+  lastRenderTime: number;
+  courseReferencePoint: LngLat | null;
+  courseBearing: number | null;
+  lastTravelBearing: number | null;
+  lastVehicleElevation!: number;
+  lastMatch: RoadMatch | null;
+  lastReliableMatch: RoadMatch | null;
+  readonly maxReliableMatchDistance: number;
+  readonly maxReliableElevationDifference: number;
+  ready: boolean;
+  active: boolean;
+  initializationError: unknown;
+  trackSupported: boolean | null;
+  trackInfo: TrackInfo | null;
+  currentTrackKey: string;
+  orientationMode: OrientationMode;
+  autoZoomEnabled: boolean;
+  readonly tiltedAngle: number;
+  tiltAngle: number;
+  is3D: boolean;
+  theme: ActiveTheme;
+  isFreeBrowsing: boolean;
+  lastInteractionTime: number;
+  readonly statusElement: HTMLElement | null;
+  readonly guidanceElement: HTMLElement | null;
+  readonly stateElement: HTMLElement | null;
+  readonly recenterBtn: HTMLElement | null;
+  readonly readyPromise: Promise<this>;
+
+  constructor(containerId: string) {
     this.container = document.getElementById(containerId);
     this.map = null;
     this.marker = null;
@@ -564,21 +798,21 @@ class NavigationMapRenderer {
     this.tiltedAngle = 60;
     this.tiltAngle = localStorage.getItem("gps_3d_tilt") === "false" ? 0 : this.tiltedAngle;
     this.is3D = this.tiltAngle > 10;
-    this.theme = document.documentElement.getAttribute("data-theme") || "dark";
+    this.theme = (document.documentElement.getAttribute("data-theme") || "dark") as ActiveTheme;
     this.isFreeBrowsing = false;
     this.lastInteractionTime = 0;
     this.statusElement = document.getElementById("road-direction-status");
     this.guidanceElement = document.getElementById("route-guidance-status");
     this.stateElement = document.getElementById("navigation-map-state");
     this.recenterBtn = document.getElementById("btn-recenter");
-    this.readyPromise = this.initialize().catch((error) => {
+    this.readyPromise = this.initialize().catch((error: unknown) => {
       this.initializationError = error;
-      this.setMapState(`Navigation map unavailable: ${error.message || error}`);
+      this.setMapState(`Navigation map unavailable: ${(error as { message?: unknown }).message || error}`);
       throw error;
     });
   }
 
-  get capabilities() {
+  get capabilities(): MapCapabilities {
     const available = this.ready && !this.initializationError && this.trackSupported !== false;
     return {
       vectorMap: available,
@@ -592,7 +826,7 @@ class NavigationMapRenderer {
     };
   }
 
-  createStyle(roads) {
+  createStyle(roads: LaneFeatureCollection): MapLibreStyle {
     const light = this.theme === "light";
     return {
       version: 8,
@@ -659,15 +893,15 @@ class NavigationMapRenderer {
           },
         },
       ],
-    };
+    } as MapLibreStyle;
   }
 
-  createArrowImage() {
+  createArrowImage(): ImageData {
     const size = 32;
     const canvas = document.createElement("canvas");
     canvas.width = size;
     canvas.height = size;
-    const context = canvas.getContext("2d");
+    const context = canvas.getContext("2d")!;
     context.clearRect(0, 0, size, size);
     context.strokeStyle = this.theme === "light" ? "#0369a1" : "#38bdf8";
     context.lineWidth = 4;
@@ -681,7 +915,7 @@ class NavigationMapRenderer {
     return context.getImageData(0, 0, size, size);
   }
 
-  async initialize() {
+  async initialize(): Promise<this> {
     if (!this.container) throw new Error("Navigation map container is missing");
     if (!window.maplibregl) throw new Error("MapLibre GL JS is unavailable");
 
@@ -689,17 +923,17 @@ class NavigationMapRenderer {
     if (!roadsResponse.ok) {
       throw new Error('Offline SRP traffic lanes could not be loaded');
     }
-    const roads = await roadsResponse.json();
+    const roads = await roadsResponse.json() as LaneFeatureCollection;
     this.projection = new SrpGameProjection(roads.coordinateSpace || {});
     this.matcher = new DirectedRoadMatcher(roads);
     this.graph = new DirectedRoadGraph(roads);
     this.destinations = (roads.destinations || []).map((destination) => ({
       name: destination.name,
-      point: this.projection.toLngLat(destination.ac[0], destination.ac[1]),
+      point: this.projection!.toLngLat(destination.ac[0], destination.ac[1]),
     }));
     const initialCenter = this.projection.toLngLat(0, 0);
 
-    this.map = new window.maplibregl.Map({
+    this.map = new window.maplibregl!.Map({
       container: this.container,
       style: this.createStyle(roads),
       center: initialCenter,
@@ -715,23 +949,23 @@ class NavigationMapRenderer {
       touchPitch: false,
     });
     this.map.addControl(
-      new window.maplibregl.AttributionControl({
+      new window.maplibregl!.AttributionControl({
         compact: true,
         customAttribution: '<a href="https://www.overtake.gg/downloads/traffic-plan-shutoko-revival-project.57715/" target="_blank" rel="noopener">Prototype lanes: Bardaff</a>',
       })
     );
 
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const timeout = window.setTimeout(
         () => reject(new Error("Navigation map initialization timed out")),
         10000
       );
-      this.map.once("load", () => {
+      this.map!.once("load", () => {
         window.clearTimeout(timeout);
         resolve();
       });
-      this.map.once("error", (event) => {
-        if (!this.map.loaded()) {
+      this.map!.once("error", (event) => {
+        if (!this.map!.loaded()) {
           window.clearTimeout(timeout);
           reject(event.error || new Error("MapLibre failed to initialize"));
         }
@@ -759,7 +993,7 @@ class NavigationMapRenderer {
     const markerElement = document.createElement("div");
     markerElement.className = "navigation-car-marker";
     markerElement.innerHTML = '<span class="navigation-car-arrow"></span>';
-    this.marker = new window.maplibregl.Marker({
+    this.marker = new window.maplibregl!.Marker({
       element: markerElement,
       anchor: "center",
       rotationAlignment: "viewport",
@@ -768,7 +1002,7 @@ class NavigationMapRenderer {
       .setLngLat(initialCenter)
       .addTo(this.map);
 
-    const markBrowsing = (event) => {
+    const markBrowsing = (event: MapLibreMapEvent): void => {
       if (event?.originalEvent) {
         this.isFreeBrowsing = true;
         this.lastInteractionTime = Date.now();
@@ -785,7 +1019,7 @@ class NavigationMapRenderer {
     return this;
   }
 
-  setActive(active) {
+  setActive(active: boolean): void {
     const nextActive = !!active;
     const activating = nextActive && !this.active;
     this.active = nextActive;
@@ -809,11 +1043,11 @@ class NavigationMapRenderer {
       this.guidanceElement.hidden = !this.active || !mapAvailable || !this.activeRoute;
     }
     if (this.active && this.map) {
-      window.setTimeout(() => this.map.resize(), 0);
+      window.setTimeout(() => this.map!.resize(), 0);
     }
   }
 
-  setTrackInfo(info, trackName) {
+  setTrackInfo(info: TrackInfo | null, trackName: string): boolean {
     this.trackInfo = info || this.trackInfo;
     this.currentTrackKey = trackName || this.currentTrackKey;
     const previousSupport = this.trackSupported;
@@ -826,16 +1060,16 @@ class NavigationMapRenderer {
     return previousSupport !== this.trackSupported;
   }
 
-  setMapState(message = "") {
+  setMapState(message = ""): void {
     if (!this.stateElement) return;
     this.stateElement.textContent = message;
     this.stateElement.hidden = !message;
   }
 
-  applyTrackSupport() {
+  applyTrackSupport(): void {
     const supported = this.trackSupported !== false;
     if (this.initializationError) {
-      this.setMapState(`Navigation map unavailable: ${this.initializationError.message || this.initializationError}`);
+      this.setMapState(`Navigation map unavailable: ${(this.initializationError as { message?: unknown }).message || this.initializationError}`);
     } else if (!supported) {
       this.setMapState("Game Navigation is currently available on SRP tracks only.");
     } else {
@@ -854,7 +1088,7 @@ class NavigationMapRenderer {
     }
   }
 
-  setTheme(theme) {
+  setTheme(theme: string): void {
     const previousTheme = this.theme;
     this.theme = theme === "light" ? "light" : "dark";
     if (!this.map || !this.map.isStyleLoaded()) return;
@@ -874,15 +1108,15 @@ class NavigationMapRenderer {
     }
   }
 
-  updateEnvironment() {}
+  updateEnvironment(): void {}
 
-  updateRecenterButton(show) {
+  updateRecenterButton(show: boolean): void {
     if (this.recenterBtn && this.active) {
       this.recenterBtn.style.display = show ? "flex" : "none";
     }
   }
 
-  getTrackingPadding() {
+  getTrackingPadding(): MapLibrePadding {
     const height = this.map?.getContainer()?.clientHeight || 0;
     return {
       top: Math.round(height / 3),
@@ -892,7 +1126,7 @@ class NavigationMapRenderer {
     };
   }
 
-  recenter() {
+  recenter(): void {
     this.isFreeBrowsing = false;
     this.updateRecenterButton(false);
     if (this.map && this.displayPoint && this.displayBearing !== null) {
@@ -905,7 +1139,7 @@ class NavigationMapRenderer {
     }
   }
 
-  toggleOrientation() {
+  toggleOrientation(): OrientationMode {
     this.orientationMode = this.orientationMode === "headingUp" ? "northUp" : "headingUp";
     // Orientation is a camera command, so it must leave free-browse mode and
     // apply immediately. Otherwise a previous pan/rotate gesture makes the
@@ -914,9 +1148,9 @@ class NavigationMapRenderer {
     return this.orientationMode;
   }
 
-  resolveTravelBearing(point, telemetryBearing) {
+  resolveTravelBearing(point: LngLat, telemetryBearing: number): number {
     if (!this.courseReferencePoint) {
-      this.courseReferencePoint = [...point];
+      this.courseReferencePoint = [...point] as LngLat;
       this.courseBearing = telemetryBearing;
       return telemetryBearing;
     }
@@ -924,13 +1158,13 @@ class NavigationMapRenderer {
     const movement = DirectedRoadMatcher.distance(this.courseReferencePoint, point);
     if (movement > 300) {
       // Session restarts and teleports must not be interpreted as a heading.
-      this.courseReferencePoint = [...point];
+      this.courseReferencePoint = [...point] as LngLat;
       this.courseBearing = telemetryBearing;
       this.matcher?.resetContinuity();
     } else if (movement >= 0.8) {
       const measuredBearing = DirectedRoadMatcher.bearing(this.courseReferencePoint, point);
       const bearingDifference = DirectedRoadMatcher.normalizeAngle(
-        measuredBearing - this.courseBearing
+        measuredBearing - this.courseBearing!
       );
       if (Math.abs(bearingDifference) > 120) {
         // Some telemetry sources expose the rearward vehicle axis. A nearly
@@ -939,10 +1173,10 @@ class NavigationMapRenderer {
       } else {
         const factor = Math.min(0.55, Math.max(0.18, movement / 10));
         this.courseBearing = DirectedRoadMatcher.normalizeAngle(
-          this.courseBearing + bearingDifference * factor
+          this.courseBearing! + bearingDifference * factor
         );
       }
-      this.courseReferencePoint = [...point];
+      this.courseReferencePoint = [...point] as LngLat;
     }
 
     // Course-over-ground is independent of whether a telemetry provider
@@ -951,7 +1185,7 @@ class NavigationMapRenderer {
     return this.courseBearing ?? telemetryBearing;
   }
 
-  setTiltAngle(angle) {
+  setTiltAngle(angle: number): boolean {
     this.tiltAngle = Math.max(0, Math.min(this.tiltedAngle, angle));
     this.is3D = this.tiltAngle > 10;
     localStorage.setItem("gps_3d_tilt", this.is3D ? "true" : "false");
@@ -959,17 +1193,17 @@ class NavigationMapRenderer {
     return this.is3D;
   }
 
-  toggleTilt() {
+  toggleTilt(): boolean {
     return this.setTiltAngle(this.is3D ? 0 : this.tiltedAngle);
   }
 
-  setAutoZoom(enabled) {
+  setAutoZoom(enabled: boolean): boolean {
     this.autoZoomEnabled = !!enabled;
     localStorage.setItem("gps_auto_zoom", this.autoZoomEnabled ? "true" : "false");
     return this.autoZoomEnabled;
   }
 
-  setDirectionStatus(match) {
+  setDirectionStatus(match: RoadMatch | null): void {
     if (!this.statusElement) return;
     if (!match) {
       this.statusElement.className = "road-direction-status direction-unknown";
@@ -984,13 +1218,13 @@ class NavigationMapRenderer {
       : `<span class="direction-icon">&crarr;</span><span>${roadName} &middot; opposite direction</span>`;
   }
 
-  getDestinations() {
+  getDestinations(): string[] {
     return this.trackSupported === false
       ? []
       : this.destinations.map((destination) => destination.name);
   }
 
-  routeGeoJson(coordinates) {
+  routeGeoJson(coordinates: Coordinate[]): RouteLineFeatureCollection {
     return {
       type: "FeatureCollection",
       features: coordinates.length > 1
@@ -999,14 +1233,18 @@ class NavigationMapRenderer {
     };
   }
 
-  dispatchRouteChange(detail) {
+  getActiveRouteSource(): MapLibreGeoJSONSource | undefined {
+    return this.map?.getSource<MapLibreGeoJSONSource>("active-route");
+  }
+
+  dispatchRouteChange(detail: RouteChangeDetail): void {
     window.dispatchEvent(new CustomEvent("gps-navigation-route-changed", { detail }));
   }
 
-  navigationMatches(point, bearing, elevation) {
+  navigationMatches(point: LngLat, bearing: number, elevation: number | null): RoadMatch[] {
     const matches = this.matcher?.routeCandidates(point, bearing, elevation) || [];
     if (!matches.length) return [];
-    const primary = matches[0];
+    const primary = matches[0]!;
     return matches.filter((match) => (
       match.distance <= Math.min(this.maxReliableMatchDistance, primary.distance + 12)
       && match.score <= primary.score + 20
@@ -1018,15 +1256,20 @@ class NavigationMapRenderer {
     ));
   }
 
-  planRoute(point, bearing, elevation, destination = this.destination) {
+  planRoute(
+    point: LngLat,
+    bearing: number,
+    elevation: number | null,
+    destination: Destination | null = this.destination
+  ): RoutePlan | null {
     if (!destination) return null;
-    let best = null;
-    const seenStarts = new Set();
+    let best: RoutePlan | null = null;
+    const seenStarts = new Set<string>();
     for (const match of this.navigationMatches(point, bearing, elevation)) {
-      const startKey = this.graph.key(match.segmentTo);
+      const startKey = this.graph!.key(match.segmentTo);
       if (seenStarts.has(startKey)) continue;
       seenStarts.add(startKey);
-      const route = this.graph.route(match.point, destination.point, match);
+      const route = this.graph!.route(match.point, destination.point, match);
       if (!route) continue;
       const score = route.distanceM
         + (match.distance * 5)
@@ -1037,17 +1280,17 @@ class NavigationMapRenderer {
     return best;
   }
 
-  applyRoute(route, recalculated = false) {
+  applyRoute(route: RouteData, recalculated = false): RouteActiveDetail {
     this.activeRoute = route;
     this.routeProgressIndex = 0;
     this.routeProgressAmount = 0;
     this.offRouteSince = 0;
-    const source = this.map?.getSource("active-route");
-    if (source) source.setData(this.routeGeoJson(route.coordinates));
+    const source = this.getActiveRouteSource();
+    if (source) void source.setData(this.routeGeoJson(route.coordinates));
     if (this.guidanceElement) this.guidanceElement.hidden = !this.active;
-    const detail = {
+    const detail: RouteActiveDetail = {
       active: true,
-      destination: this.destination.name,
+      destination: this.destination!.name,
       distanceM: route.distanceM,
       nodeCount: route.coordinates.length,
       recalculated,
@@ -1056,7 +1299,7 @@ class NavigationMapRenderer {
     return detail;
   }
 
-  setDestination(destinationName) {
+  setDestination(destinationName: string): SetDestinationResult {
     if (this.trackSupported === false) {
       return { error: "Route guidance is available on SRP tracks only." };
     }
@@ -1066,7 +1309,7 @@ class NavigationMapRenderer {
 
     const plan = this.planRoute(
       this.lastGamePoint,
-      this.lastTravelBearing,
+      this.lastTravelBearing as number,
       this.lastVehicleElevation,
       destination
     );
@@ -1077,55 +1320,55 @@ class NavigationMapRenderer {
     return detail;
   }
 
-  clearDestination() {
+  clearDestination(): RouteInactiveDetail {
     this.destination = null;
     this.activeRoute = null;
     this.routeProgressIndex = 0;
     this.routeProgressAmount = 0;
     this.offRouteSince = 0;
-    const source = this.map?.getSource("active-route");
-    if (source) source.setData(this.routeGeoJson([]));
+    const source = this.getActiveRouteSource();
+    if (source) void source.setData(this.routeGeoJson([]));
     if (this.guidanceElement) this.guidanceElement.hidden = true;
-    const detail = { active: false };
+    const detail: RouteInactiveDetail = { active: false };
     this.dispatchRouteChange(detail);
     return detail;
   }
 
-  findRouteSegment(match) {
+  findRouteSegment(match: RoadMatch | null): RouteProgress | null {
     if (!match || !this.activeRoute?.nodeKeys?.length) return null;
-    const fromKey = this.graph.key(match.segmentFrom);
-    const toKey = this.graph.key(match.segmentTo);
+    const fromKey = this.graph!.key(match.segmentFrom);
+    const toKey = this.graph!.key(match.segmentTo);
     const nodeKeys = this.activeRoute.nodeKeys;
     const start = Math.max(0, this.routeProgressIndex - 1);
     for (let index = start; index < nodeKeys.length - 1; index += 1) {
       if (nodeKeys[index + 1] !== toKey) continue;
       if (nodeKeys[index] !== null && nodeKeys[index] !== fromKey) continue;
-      const projection = this.graph.project(
+      const projection = this.graph!.project(
         match.point,
-        this.activeRoute.coordinates[index],
-        this.activeRoute.coordinates[index + 1]
+        this.activeRoute.coordinates[index]!,
+        this.activeRoute.coordinates[index + 1]!
       );
       return { index, ...projection };
     }
     return null;
   }
 
-  redrawRemainingRoute(progress) {
-    const coordinates = this.activeRoute.coordinates;
+  redrawRemainingRoute(progress: RouteProgress): void {
+    const coordinates = this.activeRoute!.coordinates;
     const remainingCoordinates = [
       progress.point,
       ...coordinates.slice(progress.index + 1),
     ];
-    const source = this.map?.getSource("active-route");
-    if (source) source.setData(this.routeGeoJson(remainingCoordinates));
+    const source = this.getActiveRouteSource();
+    if (source) void source.setData(this.routeGeoJson(remainingCoordinates));
   }
 
-  recalculateRoute(now) {
+  recalculateRoute(now: number): boolean {
     if (now - this.lastRerouteAttempt < this.routeRecalculationCooldownMs) return false;
     this.lastRerouteAttempt = now;
     const plan = this.planRoute(
-      this.lastGamePoint,
-      this.lastTravelBearing,
+      this.lastGamePoint as LngLat,
+      this.lastTravelBearing as number,
       this.lastVehicleElevation
     );
     if (!plan) {
@@ -1139,7 +1382,7 @@ class NavigationMapRenderer {
     return true;
   }
 
-  updateRouteProgress(matches, force = false, now = performance.now()) {
+  updateRouteProgress(matches: RoadMatch[], force = false, now = performance.now()): void {
     if (!this.activeRoute || !this.destination) return;
     if (!force && now - this.lastRouteProgressUpdate < 300) return;
     this.lastRouteProgressUpdate = now;
@@ -1164,8 +1407,8 @@ class NavigationMapRenderer {
     if (progress.index < this.routeProgressIndex) return;
     if (progress.index === this.routeProgressIndex) {
       progress.amount = Math.max(this.routeProgressAmount, progress.amount);
-      const from = this.activeRoute.coordinates[progress.index];
-      const to = this.activeRoute.coordinates[progress.index + 1];
+      const from = this.activeRoute.coordinates[progress.index]!;
+      const to = this.activeRoute.coordinates[progress.index + 1]!;
       progress.point = [
         from[0] + (to[0] - from[0]) * progress.amount,
         from[1] + (to[1] - from[1]) * progress.amount,
@@ -1175,26 +1418,26 @@ class NavigationMapRenderer {
     }
     this.routeProgressAmount = progress.amount;
     this.redrawRemainingRoute(progress);
-    const segmentRemaining = this.graph.distance(
+    const segmentRemaining = this.graph!.distance(
       progress.point,
-      this.activeRoute.coordinates[progress.index + 1]
+      this.activeRoute.coordinates[progress.index + 1]!
     );
     const remaining = segmentRemaining
       + (this.activeRoute.remaining[progress.index + 1] || 0);
     if (!this.guidanceElement) return;
     if (remaining < 80) {
-      this.guidanceElement.innerText = `${this.destination.name} - arriving`;
+      this.guidanceElement.innerText = `${this.destination!.name} - arriving`;
       this.guidanceElement.classList.add("route-arriving");
     } else {
       const distanceText = remaining >= 1000
         ? `${(remaining / 1000).toFixed(1)} km`
         : `${Math.round(remaining)} m`;
-      this.guidanceElement.innerText = `${distanceText} to ${this.destination.name}`;
+      this.guidanceElement.innerText = `${distanceText} to ${this.destination!.name}`;
       this.guidanceElement.classList.remove("route-arriving");
     }
   }
 
-  render(interpolator) {
+  render(interpolator: TelemetryInterpolator): void {
     if (!this.active || !this.ready || !this.map || !this.projection
       || this.trackSupported === false || this.initializationError) return;
     const position = interpolator.currentPos;
@@ -1212,7 +1455,7 @@ class NavigationMapRenderer {
     );
     this.lastTravelBearing = travelBearing;
     this.lastVehicleElevation = position[1];
-    const match = this.matcher.match(longitudeLatitude, travelBearing, position[1]);
+    const match = this.matcher!.match(longitudeLatitude, travelBearing, position[1]);
     const reliableMatch = match
       && match.distance <= this.maxReliableMatchDistance
       && match.elevationDifference <= this.maxReliableElevationDifference
@@ -1233,7 +1476,7 @@ class NavigationMapRenderer {
     const displayJump = this.displayPoint
       && DirectedRoadMatcher.distance(this.displayPoint, targetPoint) > 300;
     if (!this.displayPoint || this.displayBearing === null || displayJump) {
-      this.displayPoint = [...targetPoint];
+      this.displayPoint = [...targetPoint] as LngLat;
       this.displayBearing = targetBearing;
     } else {
       const positionFactor = 1 - Math.exp(-16 * deltaSeconds);
@@ -1274,7 +1517,7 @@ class NavigationMapRenderer {
     const screenBearing = DirectedRoadMatcher.normalizeAngle(
       this.displayBearing - this.map.getBearing()
     );
-    this.marker.setLngLat(this.displayPoint).setRotation(screenBearing);
+    this.marker!.setLngLat(this.displayPoint).setRotation(screenBearing);
   }
 }
 

@@ -42,3 +42,9 @@ desktop.ini
 scratch/
 .tempmediaStorage/
 .user_uploaded/
+
+# Node / generated frontend files
+node_modules/
+frontend/js/
+frontend/vendor/maplibre-gl/
+*.tsbuildinfo

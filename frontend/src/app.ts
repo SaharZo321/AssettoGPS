@@ -2,12 +2,23 @@
  * Main Application Coordinator & WebSocket Manager
  */
 
-class App {
-  constructor() {
-    this.ws = null;
-    this.reconnectTimer = null;
-    this.wakeLock = null;
+interface ServerStatus {
+  localIp?: string;
+  cspConnected?: boolean;
+}
 
+class App {
+  private ws: WebSocket | null = null;
+  private reconnectTimer: number | undefined;
+  private wakeLock: WakeLockSentinel | null = null;
+  private toastTimer: number | undefined;
+  private cspLightAvailable = false;
+  private readonly renderer: NavigationController;
+  private readonly interpolator: MotionInterpolator;
+  private readonly ui: NavigationUI;
+  private readonly audio: AudioAlertManager;
+
+  constructor() {
     this.renderer = new NavigationController("navigation-map");
     this.interpolator = window.motionInterpolator;
     this.ui = window.navUI;
@@ -16,9 +27,10 @@ class App {
     this.setupEventListeners();
     this.renderer.readyPromise
       .then(() => this.updateNavigationUi())
-      .catch((error) => {
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
         console.error("Navigation Map failed to initialize", error);
-        this.updateNavigationUi(error.message || String(error));
+        this.updateNavigationUi(message);
         this.showToast("Navigation Map could not start.");
       });
     this.requestWakeLock();
@@ -26,7 +38,7 @@ class App {
     this.startLoop();
   }
 
-  async requestWakeLock() {
+  async requestWakeLock(): Promise<void> {
     try {
       if ("wakeLock" in navigator) {
         this.wakeLock = await navigator.wakeLock.request("screen");
@@ -41,7 +53,7 @@ class App {
     }
   }
 
-  connectWebSocket() {
+  connectWebSocket(): void {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws/telemetry`;
 
@@ -55,7 +67,7 @@ class App {
 
     this.ws.onmessage = (event) => {
       try {
-        const frame = JSON.parse(event.data);
+        const frame = JSON.parse(String(event.data)) as TelemetryFrame;
         this.interpolator.setTarget(frame);
         this.ui.update(frame);
 
@@ -77,18 +89,18 @@ class App {
       console.log("WebSocket disconnected, reconnecting in 2s...");
       this.updateConnectionStatus(false);
       this.updateServerOfflineNotice(true);
-      clearTimeout(this.reconnectTimer);
+      if (this.reconnectTimer !== undefined) clearTimeout(this.reconnectTimer);
       this.reconnectTimer = setTimeout(() => this.connectWebSocket(), 2000);
     };
 
     this.ws.onerror = () => {
       this.updateConnectionStatus(false);
       this.updateServerOfflineNotice(true);
-      this.ws.close();
+      this.ws?.close();
     };
   }
 
-  updateConnectionStatus(connected, reconnecting = false) {
+  updateConnectionStatus(connected: boolean, reconnecting = false): void {
     const badge = document.getElementById("connection-status-badge");
     const text = document.getElementById("connection-status-text");
     if (!badge || !text) return;
@@ -106,29 +118,29 @@ class App {
     }
   }
 
-  updateServerOfflineNotice(visible) {
+  updateServerOfflineNotice(visible: boolean): void {
     const notice = document.getElementById("server-offline-notice");
     if (!notice) return;
     notice.classList.toggle("visible", visible);
     notice.setAttribute("aria-hidden", visible ? "false" : "true");
   }
 
-  showToast(message) {
+  showToast(message: string): void {
     const toast = document.getElementById("app-toast");
     if (!toast) return;
     toast.innerText = message;
     toast.classList.add("show");
-    clearTimeout(this.toastTimer);
+    if (this.toastTimer !== undefined) clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => {
       toast.classList.remove("show");
     }, 2400);
   }
 
-  async loadServerStatus() {
+  async loadServerStatus(): Promise<void> {
     try {
       const res = await fetch("/api/status");
       if (res.ok) {
-        const data = await res.json();
+        const data = await res.json() as ServerStatus;
         const urlEl = document.getElementById("device-network-url");
         if (urlEl) {
           const port = window.location.port ? `:${window.location.port}` : "";
@@ -145,14 +157,18 @@ class App {
     }
   }
 
-  updateAutoThemeCspNotice(cspLightAvailable) {
+  updateAutoThemeCspNotice(cspLightAvailable: boolean): void {
     this.cspLightAvailable = cspLightAvailable;
     const note = document.getElementById("auto-theme-csp-note");
     if (!note) return;
     note.hidden = cspLightAvailable;
   }
 
-  updateSegmentedActive(containerId, attrName, activeValue) {
+  updateSegmentedActive(
+    containerId: string,
+    attrName: string,
+    activeValue: string | null,
+  ): void {
     const container = document.getElementById(containerId);
     if (!container) return;
     const buttons = container.querySelectorAll(".segmented-btn");
@@ -163,7 +179,7 @@ class App {
     });
   }
 
-  updateNavigationUi(error = null) {
+  updateNavigationUi(error: string | null = null): void {
     const capabilities = this.renderer.capabilities;
     if (this.ui && typeof this.ui.setMapCapabilities === "function") {
       this.ui.setMapCapabilities(capabilities);
@@ -175,7 +191,7 @@ class App {
       const select = document.getElementById("navigation-destination");
       if (select) select.replaceChildren(new Option("Choose a destination...", ""));
       const startButton = document.getElementById("btn-start-route");
-      if (startButton) startButton.disabled = true;
+      if (startButton) (startButton as HTMLButtonElement).disabled = true;
     }
     if (capabilities.unsupportedTrack) {
       this.updateRouteUi({ error: "Route guidance is available on SRP tracks only." });
@@ -183,22 +199,25 @@ class App {
     if (error) this.updateRouteUi({ error: `Navigation Map could not start (${error}).` });
   }
 
-  populateRouteDestinations() {
+  populateRouteDestinations(): void {
     const select = document.getElementById("navigation-destination");
     if (!select) return;
-    const currentValue = select.value;
+    const destinationSelect = select as HTMLSelectElement;
+    const currentValue = destinationSelect.value;
     const destinations = this.renderer.getDestinations();
-    const existing = Array.from(select.options).slice(1).map((option) => option.value);
+    const existing = Array.from(destinationSelect.options).slice(1).map((option) => option.value);
     if (existing.length !== destinations.length || existing.some((name, index) => name !== destinations[index])) {
       select.replaceChildren(new Option("Choose a destination...", ""));
-      destinations.forEach((name) => select.add(new Option(name, name)));
-      if (destinations.includes(currentValue)) select.value = currentValue;
+      destinations.forEach((name) => destinationSelect.add(new Option(name, name)));
+      if (destinations.includes(currentValue)) destinationSelect.value = currentValue;
     }
     const startButton = document.getElementById("btn-start-route");
-    if (startButton) startButton.disabled = !select.value;
+    if (startButton) {
+      (startButton as HTMLButtonElement).disabled = !destinationSelect.value;
+    }
   }
 
-  updateRouteUi(detail = {}) {
+  updateRouteUi(detail: RouteChangeDetail = {}): void {
     const note = document.getElementById("navigation-route-note");
     const clearButton = document.getElementById("btn-clear-route");
     if (clearButton) clearButton.hidden = detail.active !== true;
@@ -217,7 +236,7 @@ class App {
     }
   }
 
-  setupEventListeners() {
+  setupEventListeners(): void {
     // Recenter the MapLibre camera after manual pan or rotation.
     const btnRecenter = document.getElementById("btn-recenter");
     if (btnRecenter) {
@@ -226,7 +245,7 @@ class App {
 
     // Orientation button (Heading-up vs North-up) with clean SVGs
     const btnOrientation = document.getElementById("btn-orientation");
-    const ORIENTATION_ICONS = {
+    const ORIENTATION_ICONS: Record<OrientationMode, string> = {
       headingUp: `
         <svg class="ctrl-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <polygon points="12 3 19 20 12 16.5 5 20 12 3" fill="currentColor" stroke="none" />
@@ -240,8 +259,8 @@ class App {
     };
 
     if (btnOrientation) {
-      const updateOrientationButton = (mode) => {
-        btnOrientation.innerHTML = ORIENTATION_ICONS[mode] || ORIENTATION_ICONS.headingUp;
+      const updateOrientationButton = (mode: OrientationMode): void => {
+        btnOrientation.innerHTML = ORIENTATION_ICONS[mode];
         const label = mode === "northUp" ? "Map orientation: North Up" : "Map orientation: Heading Up";
         btnOrientation.title = label;
         btnOrientation.setAttribute("aria-label", label);
@@ -315,7 +334,8 @@ class App {
 
     this.updateNavigationUi();
     window.addEventListener("gps-navigation-route-changed", (event) => {
-      this.updateRouteUi(event.detail || {});
+      const detail = (event as CustomEvent<RouteChangeDetail>).detail;
+      this.updateRouteUi(detail || {});
       if (this.ui && typeof this.ui.setMapCapabilities === "function") {
         this.ui.setMapCapabilities(this.renderer.capabilities);
       }
@@ -326,12 +346,15 @@ class App {
     const clearRouteButton = document.getElementById("btn-clear-route");
     if (destinationSelect) {
       destinationSelect.addEventListener("change", () => {
-        if (startRouteButton) startRouteButton.disabled = !destinationSelect.value;
+        if (startRouteButton) {
+          (startRouteButton as HTMLButtonElement).disabled =
+            !(destinationSelect as HTMLSelectElement).value;
+        }
       });
     }
     if (startRouteButton && destinationSelect) {
       startRouteButton.addEventListener("click", () => {
-        const result = this.renderer.startRoute(destinationSelect.value);
+        const result = this.renderer.startRoute((destinationSelect as HTMLSelectElement).value);
         if (result.error) {
           this.updateRouteUi(result);
           this.showToast(result.error);
@@ -354,6 +377,7 @@ class App {
     themeButtons.forEach((btn) => {
       btn.addEventListener("click", () => {
         const selectedTheme = btn.getAttribute("data-theme");
+        if (!selectedTheme) return;
         this.renderer.setTheme(selectedTheme);
         this.updateSegmentedActive("control-theme", "data-theme", selectedTheme);
       });
@@ -366,6 +390,7 @@ class App {
     unitButtons.forEach((btn) => {
       btn.addEventListener("click", () => {
         const selectedUnit = btn.getAttribute("data-unit");
+        if (!selectedUnit) return;
         this.ui.setUnit(selectedUnit);
         this.updateSegmentedActive("control-units", "data-unit", selectedUnit);
       });
@@ -374,10 +399,11 @@ class App {
     // 3. Audio Alerts Toggle
     const toggleAudio = document.getElementById("toggle-audio-alerts");
     if (toggleAudio) {
-      toggleAudio.checked = this.audio.enabled;
+      (toggleAudio as HTMLInputElement).checked = this.audio.enabled;
       toggleAudio.addEventListener("change", (e) => {
-        this.audio.setSound(e.target.checked);
-        if (e.target.checked) {
+        const input = e.currentTarget as HTMLInputElement;
+        this.audio.setSound(input.checked);
+        if (input.checked) {
           this.audio.playPoiChime();
         }
       });
@@ -386,9 +412,9 @@ class App {
     // 4. Dynamic Auto-Zoom Toggle
     const toggleAutoZoom = document.getElementById("toggle-auto-zoom");
     if (toggleAutoZoom) {
-      toggleAutoZoom.checked = this.renderer.autoZoomEnabled;
+      (toggleAutoZoom as HTMLInputElement).checked = this.renderer.autoZoomEnabled;
       toggleAutoZoom.addEventListener("change", (e) => {
-        this.renderer.setAutoZoom(e.target.checked);
+        this.renderer.setAutoZoom((e.currentTarget as HTMLInputElement).checked);
       });
     }
 
@@ -430,7 +456,7 @@ class App {
     window.addEventListener("pointerdown", () => this.audio.unlock(), { once: true });
   }
 
-  startLoop() {
+  startLoop(): void {
     const loop = () => {
       this.interpolator.update();
       this.renderer.render(this.interpolator);

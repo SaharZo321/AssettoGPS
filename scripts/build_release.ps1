@@ -21,6 +21,15 @@ if (-not $stageRoot.StartsWith($repoRoot, [System.StringComparison]::OrdinalIgno
 
 Push-Location $repoRoot
 try {
+    & corepack.cmd pnpm install --frozen-lockfile
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Frontend dependency installation failed.'
+    }
+    & corepack.cmd pnpm run build
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Frontend TypeScript build failed.'
+    }
+
     uv sync --group build --locked
     if ($LASTEXITCODE -ne 0) {
         throw "Dependency synchronization failed."

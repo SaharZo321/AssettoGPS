@@ -102,6 +102,28 @@ def main() -> int:
         if "mock" in frontend.lower() or "/api/mode" in frontend:
             raise RuntimeError("Public frontend still exposes generated telemetry")
 
+        frontend_assets = {
+            "/js/maplibre-bootstrap.js": "application/javascript",
+            "/vendor/maplibre-gl/maplibre-gl.mjs": "application/javascript",
+            "/vendor/maplibre-gl/maplibre-gl-shared.mjs": "application/javascript",
+            "/vendor/maplibre-gl/maplibre-gl-worker.mjs": "application/javascript",
+            "/vendor/maplibre-gl/maplibre-gl.css": "text/css",
+            "/vendor/maplibre-gl/LICENSE.txt": "text/plain",
+        }
+        for asset_path, expected_content_type in frontend_assets.items():
+            with urllib.request.urlopen(f"{base_url}{asset_path}", timeout=2.0) as response:
+                content = response.read()
+                content_type = response.headers.get_content_type()
+            if (
+                response.status != 200
+                or not content
+                or content_type != expected_content_type
+            ):
+                raise RuntimeError(
+                    f"Bundled asset is invalid: {asset_path} "
+                    f"({response.status}, {content_type}, {len(content)} bytes)"
+                )
+
         frame = asyncio.run(receive_telemetry_frame(port))
         if "connected" not in frame or frame.get("isMock"):
             raise RuntimeError(f"Unexpected WebSocket telemetry frame: {frame}")
