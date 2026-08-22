@@ -33,23 +33,23 @@ class MockTelemetryGenerator:
 
         # Calibrated Tokyo Expressway highway loop waypoints (X, Z)
         self.waypoints = [
-            (1745.0, 4820.0),   # Daikoku PA
-            (2920.0, 4350.0),   # Tsurumi Tsubasa Bridge
+            (-5897.0, 14006.5), # Daikoku PA
+            (53.0, 10965.4),    # Tsurumi Tsubasa Bridge
             (1150.0, 1680.0),   # Oi PA
-            (4865.0, -4165.0),  # Ariake JCT
+            (3490.7, -3314.6),  # Ariake JCT
             (5898.5, -4654.8),  # Tatsumi PA
-            (2150.0, -3150.0),  # Hakozaki JCT
-            (360.4, -5787.4),   # Ginza (C1)
+            (3689.1, -8867.9),  # Hakozaki JCT
+            (1110.7, -5727.6),  # Ginza (C1)
             (-3.8, -6053.3),    # Tokyo Tower (C1)
             (-4106.3, -6450.6), # Shibuya Crossing
             (-4345.5, -8875.0), # Yoyogi PA
             (-4899.6, -9770.8), # Shinjuku
             (1099.3, -4680.1),  # Shibaura PA
-            (2432.9, -4240.1),  # Rainbow Bridge Center Span
+            (1566.9, -3909.6),  # Rainbow Bridge Center Span
             (-254.7, 1328.6),   # Heiwajima PA
             (-308.7, 6141.9),   # Daishi PA
-            (1050.0, 5850.0),   # Yokohama Bay Bridge
-            (1745.0, 4820.0),   # Back to Daikoku PA
+            (-6756.5, 15196.5), # Yokohama Bay Bridge
+            (-5897.0, 14006.5), # Back to Daikoku PA
         ]
 
     def get_frame(self) -> Dict[str, Any]:
@@ -80,7 +80,13 @@ class MockTelemetryGenerator:
         heading_rad = math.atan2(dx, dz)
         heading_deg = math.degrees(heading_rad) % 360
 
-        cur_y = 15.0 + 8.0 * math.sin(self.t * 0.1)
+        # Realistic variable elevation (subterranean tunnels vs elevated viaducts)
+        if -4900 < cur_x < -3600 and -9900 < cur_z < -6000:
+            cur_y = -8.0  # Subterranean Yamate tunnel
+        elif 200 < cur_x < 2200 and -6500 < cur_z < -4500:
+            cur_y = -4.0  # C1 underground segment
+        else:
+            cur_y = 18.0 + 8.0 * math.sin(self.t * 0.1)  # Elevated open-air viaduct (10m to 26m)
 
         # Realistic variable speed (straights vs curves)
         curvature = abs(math.sin(self.t * 0.3))

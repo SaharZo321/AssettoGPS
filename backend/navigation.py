@@ -12,8 +12,49 @@ def calculate_distance_2d(p1: List[float], p2: List[float]) -> float:
     return math.hypot(p1[0] - p2[0], p1[2] - p2[2])
 
 
+class TunnelDetector:
+    """Detects whether the car is inside an underground/tunnel zone based on elevation and track coordinates"""
+
+    @staticmethod
+    def detect_tunnel(track_name: str, car_pos: List[float]) -> Dict[str, Any]:
+        if not car_pos or len(car_pos) < 3:
+            return {"inTunnel": False, "tunnelName": None}
+
+        x, y, z = car_pos[0], car_pos[1], car_pos[2]
+        track_lower = str(track_name).lower()
+        is_srp = "shuto" in track_lower or "srp" in track_lower or "ptb" in track_lower or not track_name
+
+        # 1. Shutoko Revival Project (SRP / Tokyo Expressway)
+        if is_srp:
+            # On SRP: Open air roads are elevated at y >= +8m to +48m.
+            # Underground/subsea tunnels plunge below sea level at y <= +0.5m.
+            if y <= 0.5:
+                # Name specific tunnels by location
+                if -6800 < x < -1800 and -13000 < z < -1000:
+                    return {"inTunnel": True, "tunnelName": "Yamate Tunnel (C2)"}
+                elif -2500 < x < 4500 and 1000 < z < 9000:
+                    return {"inTunnel": True, "tunnelName": "Haneda Subsea Tunnel"}
+                elif -2200 < x < 2800 and -9200 < z < -3500:
+                    return {"inTunnel": True, "tunnelName": "C1 Underground Segment"}
+                elif 1000 < x < 4500 and -4000 < z < 500:
+                    return {"inTunnel": True, "tunnelName": "Tokyo Port Tunnel"}
+                else:
+                    return {"inTunnel": True, "tunnelName": "Tunnel"}
+
+        # 2. Monaco / Circuit de Monaco (Fairmont / Larvotto Tunnel)
+        elif "monaco" in track_lower or "monte" in track_lower:
+            if y < 14.0 and -80 < x < 280 and 200 < z < 550:
+                return {"inTunnel": True, "tunnelName": "Monaco Tunnel"}
+
+        # 3. Generic tracks: subterranean elevation below ground
+        elif y < -3.0:
+            return {"inTunnel": True, "tunnelName": "Tunnel"}
+
+        return {"inTunnel": False, "tunnelName": None}
+
+
 class NavigationEngine:
-    """Manages real-time navigation cues and POI detection"""
+    """Manages real-time navigation cues, POI detection, and tunnel sensing"""
 
     def __init__(self):
         self.top_speed_kmh = 0.0
@@ -30,7 +71,7 @@ class NavigationEngine:
         car_model: str = "",
         is_srp: bool = False,
     ) -> Dict[str, Any]:
-        """Processes current car position and returns navigation cues and POIs"""
+        """Processes current car position and returns navigation cues, POIs, and tunnel state"""
         if not car_pos or len(car_pos) < 3:
             return {}
 
@@ -45,7 +86,12 @@ class NavigationEngine:
                 self.trip_distance_m += step_dist
         self.last_pos = list(car_pos)
 
-        # 1. Check nearby / upcoming POIs
+        # 1. Tunnel Detection
+        tunnel_info = TunnelDetector.detect_tunnel(track_name, car_pos)
+        in_tunnel = tunnel_info["inTunnel"]
+        tunnel_name = tunnel_info["tunnelName"]
+
+        # 2. Check nearby / upcoming POIs
         nearby_poi = None
         min_poi_dist = float("inf")
 
@@ -66,15 +112,20 @@ class NavigationEngine:
                         "desc": poi.get("desc", ""),
                     }
 
-        # 2. Formulate Top Navigation Card Banner
-        # Clean up car model name
+        # 3. Formulate Top Navigation Card Banner
         clean_car = ""
         if car_model and str(car_model).strip() not in ["0", "", "none", "None"]:
             clean_car = str(car_model).replace("ks_", "").replace("_", " ").title().strip()
 
-        # 2. Formulate Top Navigation Card Banner
         nav_instruction = {}
-        if nearby_poi and nearby_poi["distanceM"] < 1500:
+        if in_tunnel and tunnel_name:
+            nav_instruction = {
+                "title": tunnel_name,
+                "subtitle": "Tunnel Mode Active" if not nearby_poi else f"Approaching {nearby_poi['shortName']}",
+                "icon": "🚇",
+                "alertLevel": "tunnel",
+            }
+        elif nearby_poi and nearby_poi["distanceM"] < 1500:
             if nearby_poi["distanceM"] > 900:
                 dist_str = f"{nearby_poi['distanceKm']} km"
             else:
@@ -115,4 +166,6 @@ class NavigationEngine:
             "tripDistanceKm": round(self.trip_distance_m / 1000.0, 2),
             "nearbyPoi": nearby_poi,
             "instruction": nav_instruction,
+            "inTunnel": in_tunnel,
+            "tunnelName": tunnel_name,
         }

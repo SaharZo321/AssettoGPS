@@ -4,7 +4,7 @@
 
 class NavigationUI {
   constructor() {
-    this.speedUnit = "kmh"; // "kmh" or "mph"
+    this.speedUnit = localStorage.getItem("gps_speed_unit") || "kmh"; // "kmh" or "mph"
 
     // DOM cache
     this.navBanner = document.getElementById("nav-banner");
@@ -21,12 +21,17 @@ class NavigationUI {
     this.tripTime = document.getElementById("trip-time");
     this.topSpeed = document.getElementById("top-speed");
     this.fuelVal = document.getElementById("fuel-val");
+
+    if (this.speedUnitLabel) {
+      this.speedUnitLabel.innerText = this.speedUnit.toUpperCase();
+    }
   }
 
   setUnit(unit) {
-    this.speedUnit = unit;
+    this.speedUnit = unit === "mph" ? "mph" : "kmh";
+    localStorage.setItem("gps_speed_unit", this.speedUnit);
     if (this.speedUnitLabel) {
-      this.speedUnitLabel.innerText = unit.toUpperCase();
+      this.speedUnitLabel.innerText = this.speedUnit.toUpperCase();
     }
   }
 

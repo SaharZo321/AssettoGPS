@@ -29,7 +29,7 @@ class MapRenderer {
     // Camera settings
     this.orientationMode = "headingUp"; // "headingUp" or "northUp"
     this.manualZoom = 1.0;
-    this.autoZoomEnabled = true;
+    this.autoZoomEnabled = localStorage.getItem("gps_auto_zoom") !== "false";
 
     // Free-Browsing & Pan State (Waze Style)
     this.manualPanOffset = { u: 0, v: 0 };
@@ -47,9 +47,11 @@ class MapRenderer {
     this.is3D = this.tiltAngle > 10;
     this.manualRotation = 0; // Manual rotation angle in radians
 
-    // Theme Mode (Dark / Light)
-    this.theme = localStorage.getItem("gps_theme") || "dark";
-    this.setTheme(this.theme);
+    // Theme Mode: "dark", "light", or "auto" (Hybrid Tunnel & Lighting)
+    this.themeMode = localStorage.getItem("gps_theme_mode") || "auto";
+    this.theme = "dark";
+    this.lastEnvData = null;
+    this.setTheme(this.themeMode);
 
     this.recenterBtn = document.getElementById("btn-recenter");
     if (this.recenterBtn) {
@@ -337,10 +339,49 @@ class MapRenderer {
     }
   }
 
-  setTheme(theme) {
-    this.theme = theme === "light" ? "light" : "dark";
-    localStorage.setItem("gps_theme", this.theme);
-    document.documentElement.setAttribute("data-theme", this.theme);
+  setTheme(themeMode) {
+    this.themeMode = ["dark", "light", "auto"].includes(themeMode) ? themeMode : "auto";
+    localStorage.setItem("gps_theme_mode", this.themeMode);
+
+    if (this.themeMode === "auto") {
+      this.evaluateAutoTheme(this.lastEnvData);
+    } else {
+      this.applyTheme(this.themeMode);
+    }
+  }
+
+  applyTheme(activeTheme) {
+    const target = activeTheme === "light" ? "light" : "dark";
+    if (this.theme !== target || document.documentElement.getAttribute("data-theme") !== target) {
+      this.theme = target;
+      document.documentElement.setAttribute("data-theme", target);
+    }
+  }
+
+  evaluateAutoTheme(envData) {
+    if (this.themeMode !== "auto") return;
+
+    // 1. If car is inside an underground tunnel -> Night (Dark) mode
+    if (envData && envData.inTunnel) {
+      this.applyTheme("dark");
+      return;
+    }
+
+    // 2. If headlights are turned ON or in-game night is active -> Night (Dark) mode
+    if (envData && (envData.headlights || envData.isNight)) {
+      this.applyTheme("dark");
+      return;
+    }
+
+    // 3. Open road in the sun / daylight -> Day (Light) mode
+    this.applyTheme("light");
+  }
+
+  updateEnvironment(envData) {
+    this.lastEnvData = envData;
+    if (this.themeMode === "auto") {
+      this.evaluateAutoTheme(envData);
+    }
   }
 
   toggleOrientation() {
@@ -360,9 +401,14 @@ class MapRenderer {
     }
   }
 
-  toggleAutoZoom() {
-    this.autoZoomEnabled = !this.autoZoomEnabled;
+  setAutoZoom(enabled) {
+    this.autoZoomEnabled = !!enabled;
+    localStorage.setItem("gps_auto_zoom", this.autoZoomEnabled ? "true" : "false");
     return this.autoZoomEnabled;
+  }
+
+  toggleAutoZoom() {
+    return this.setAutoZoom(!this.autoZoomEnabled);
   }
 
   /**
@@ -563,62 +609,17 @@ class MapRenderer {
       ctx.drawImage(this.mapImage, 0, 0, this.trackInfo.mapWidth, this.trackInfo.mapHeight);
     }
 
-    // 4. Draw Player Car Cursor (Always accurately oriented on the road)
-    ctx.save();
-    ctx.translate(carMap.u, carMap.v);
-
-    // The car's true heading on the map is `heading - Math.PI`.
-    // In Heading-Up mode, the camera is rotated by `Math.PI - heading`.
-    // Applying `heading - Math.PI` cancels out the camera rotation, making the car point perfectly UP (0) on screen.
-    // In North-Up mode, the camera has 0 rotation, so the car simply points to its true map heading.
-    ctx.rotate(heading - Math.PI);
-
-    // Dynamic scale so cursor remains comfortably visible at all zoom levels
-    const s = 1.0 / Math.max(currentZoom, 0.5);
-
-    // Forward Headlight Beam
-    const beamGrad = ctx.createRadialGradient(0, 0, 10 * s, 0, -80 * s, 90 * s);
-    beamGrad.addColorStop(0, "rgba(56, 189, 248, 0.45)");
-    beamGrad.addColorStop(1, "rgba(56, 189, 248, 0)");
-
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(-45 * s, -110 * s);
-    ctx.lineTo(45 * s, -110 * s);
-    ctx.closePath();
-    ctx.fillStyle = beamGrad;
-    ctx.fill();
-
-    // Waze Style Cyan Arrow
-    ctx.beginPath();
-    ctx.moveTo(0, -22 * s);      // Tip
-    ctx.lineTo(16 * s, 16 * s);   // Right wing
-    ctx.lineTo(0, 8 * s);         // Center notch
-    ctx.lineTo(-16 * s, 16 * s);  // Left wing
-    ctx.closePath();
-
-    // Glow effect
-    ctx.shadowColor = "#38bdf8";
-    ctx.shadowBlur = 16;
-    ctx.fillStyle = "#38bdf8";
-    ctx.fill();
-
-    // Inner highlight
-    ctx.shadowBlur = 0;
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 2.5 * s;
-    ctx.stroke();
-
     ctx.restore();
 
-    ctx.restore();
-
-    // 5. Draw Billboard POIs on Flat 2D HUD Canvas (100% Upright, Zero Tilt Distortion)
+    // 4. Multi-Pass HUD Rendering (Ground Pins -> Depth-Sorted Badges -> Topmost Car Cursor)
     if (this.hudCtx) {
       const hctx = this.hudCtx;
       hctx.clearRect(0, 0, this.screenWidth, this.screenHeight);
 
+      // Collect and project all visible POIs
       const pois = this.trackInfo.pois || [];
+      const visiblePois = [];
+
       for (const poi of pois) {
         const poiPos = poi.pos || [0, 0, 0];
         const poiMap = this.worldToMap(poiPos[0], poiPos[2]);
@@ -632,6 +633,13 @@ class MapRenderer {
         );
         if (!proj.visible) continue;
 
+        visiblePois.push({ poi, proj, poiMap });
+      }
+
+      // PASS 1: Draw ALL ground anchor pin dots & vertical stems FIRST
+      // This ensures NO ground pin dot ever renders on top of ANY label badge
+      for (const item of visiblePois) {
+        const { proj } = item;
         hctx.save();
         hctx.translate(proj.x, proj.y);
 
@@ -640,11 +648,11 @@ class MapRenderer {
         const sBadge = proj.scale * zoomOutBoost;
         hctx.scale(sBadge, sBadge);
 
-        // Ground anchor pin dot
+        // Ground anchor pin dot (soft shadow + white anchor dot)
         hctx.beginPath();
         hctx.arc(0, 0, 3.5, 0, 2 * Math.PI);
         hctx.fillStyle = "#ffffff";
-        hctx.shadowColor = "rgba(0, 0, 0, 0.5)";
+        hctx.shadowColor = "rgba(0, 0, 0, 0.6)";
         hctx.shadowBlur = 4;
         hctx.fill();
 
@@ -654,7 +662,24 @@ class MapRenderer {
         hctx.lineTo(0, -10);
         hctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
         hctx.lineWidth = 1.5;
+        hctx.shadowBlur = 0;
         hctx.stroke();
+
+        hctx.restore();
+      }
+
+      // PASS 2: Sort visible POIs by screen depth (farthest items first, closest in front)
+      visiblePois.sort((a, b) => a.proj.y - b.proj.y);
+
+      // Draw ALL billboard badges
+      for (const item of visiblePois) {
+        const { poi, proj } = item;
+        hctx.save();
+        hctx.translate(proj.x, proj.y);
+
+        const zoomOutBoost = Math.min(1.4, Math.max(1.0, 1.0 + (0.7 - currentZoom) * 0.5));
+        const sBadge = proj.scale * zoomOutBoost;
+        hctx.scale(sBadge, sBadge);
 
         // Measure text
         const text = poi.shortName || poi.name;
@@ -666,9 +691,10 @@ class MapRenderer {
         const badgeX = -badgeW / 2;
         const badgeY = -32;
 
-        // Badge Container
-        hctx.shadowColor = "rgba(0, 0, 0, 0.55)";
+        // Badge Container with Shadow
+        hctx.shadowColor = "rgba(0, 0, 0, 0.65)";
         hctx.shadowBlur = 8;
+        hctx.shadowOffsetY = 3;
         hctx.fillStyle =
           poi.type === "parking"
             ? "#0284c7"
@@ -679,8 +705,9 @@ class MapRenderer {
         hctx.roundRect(badgeX, badgeY, badgeW, badgeH, 6);
         hctx.fill();
 
-        // Border
+        // White Border
         hctx.shadowBlur = 0;
+        hctx.shadowOffsetY = 0;
         hctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
         hctx.lineWidth = 1.2;
         hctx.stroke();
@@ -690,6 +717,69 @@ class MapRenderer {
         hctx.textAlign = "center";
         hctx.textBaseline = "middle";
         hctx.fillText(text, 0, badgeY + badgeH / 2);
+
+        hctx.restore();
+      }
+
+      // PASS 3: Draw Player Car Cursor ON TOP OF EVERYTHING (Topmost Z-Index Layer)
+      const carProj = this.projectMapToScreen(
+        carMap.u,
+        carMap.v,
+        cameraTarget,
+        currentZoom,
+        cameraRotation
+      );
+
+      if (carProj.visible || !this.isFreeBrowsing) {
+        hctx.save();
+        hctx.translate(carProj.x, carProj.y);
+
+        // Calculate screen-relative heading
+        let screenHeading;
+        if (this.orientationMode === "headingUp") {
+          // In Heading-Up, car points straight UP (0) plus any manual touch-twist
+          screenHeading = this.manualRotation;
+        } else {
+          // In North-Up, car rotates freely with world heading
+          screenHeading = heading - Math.PI + this.manualRotation;
+        }
+        hctx.rotate(screenHeading);
+
+        // Scale cursor for comfort across resolutions
+        const s = 1.05 * (this.is3D ? Math.min(1.25, Math.max(0.85, carProj.scale)) : 1.0);
+
+        // Forward Headlight Beam
+        const beamGrad = hctx.createRadialGradient(0, 0, 10 * s, 0, -80 * s, 90 * s);
+        beamGrad.addColorStop(0, "rgba(56, 189, 248, 0.50)");
+        beamGrad.addColorStop(1, "rgba(56, 189, 248, 0)");
+
+        hctx.beginPath();
+        hctx.moveTo(0, 0);
+        hctx.lineTo(-45 * s, -110 * s);
+        hctx.lineTo(45 * s, -110 * s);
+        hctx.closePath();
+        hctx.fillStyle = beamGrad;
+        hctx.fill();
+
+        // Waze Style Cyan Arrow
+        hctx.beginPath();
+        hctx.moveTo(0, -22 * s);      // Tip
+        hctx.lineTo(16 * s, 16 * s);   // Right wing
+        hctx.lineTo(0, 8 * s);         // Center notch
+        hctx.lineTo(-16 * s, 16 * s);  // Left wing
+        hctx.closePath();
+
+        // Glow effect
+        hctx.shadowColor = "#38bdf8";
+        hctx.shadowBlur = 18;
+        hctx.fillStyle = "#38bdf8";
+        hctx.fill();
+
+        // Inner highlight
+        hctx.shadowBlur = 0;
+        hctx.strokeStyle = "#ffffff";
+        hctx.lineWidth = 2.5 * s;
+        hctx.stroke();
 
         hctx.restore();
       }

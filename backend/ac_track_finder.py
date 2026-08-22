@@ -11,7 +11,7 @@ import configparser
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
-# Built-in SRP POIs (Points of Interest)
+# Built-in SRP POIs (Points of Interest) - Calibrated to official Comfy Map & Assetto Corsa SRP standards
 SRP_POIS = [
     {
         "id": "daikoku_pa",
@@ -19,7 +19,7 @@ SRP_POIS = [
         "shortName": "Daikoku PA",
         "type": "parking",
         "icon": "🅿️",
-        "pos": [1745.0, 15.0, 4820.0],
+        "pos": [-5897.0, 15.0, 14006.5],
         "desc": "Famous Tokyo car meet mecca on Daikoku Futo",
     },
     {
@@ -88,11 +88,29 @@ SRP_POIS = [
     {
         "id": "rainbow_bridge",
         "name": "Rainbow Bridge (Route 11)",
-        "shortName": "Rainbow Brg",
+        "shortName": "Rainbow Bridge",
         "type": "landmark",
         "icon": "🌉",
-        "pos": [2432.9, 55.0, -4240.1],
+        "pos": [1566.9, 45.0, -3909.6],
         "desc": "Iconic double-deck suspension bridge across Tokyo Bay",
+    },
+    {
+        "id": "tsurumi_bridge",
+        "name": "Tsurumi Tsubasa Bridge (Route B)",
+        "shortName": "Tsurumi Tsubasa Bridge",
+        "type": "landmark",
+        "icon": "🌉",
+        "pos": [53.0, 45.0, 10965.4],
+        "desc": "Iconic single-plane cable-stayed bridge on Bayshore Route North",
+    },
+    {
+        "id": "yokohama_bay_bridge",
+        "name": "Yokohama Bay Bridge (Route B)",
+        "shortName": "Yokohama Bay Bridge",
+        "type": "landmark",
+        "icon": "🌉",
+        "pos": [-6756.5, 48.0, 15196.5],
+        "desc": "Massive 860m suspension bridge on Bayshore Route South",
     },
     {
         "id": "hakozaki_jct",
@@ -100,7 +118,7 @@ SRP_POIS = [
         "shortName": "Hakozaki JCT",
         "type": "junction",
         "icon": "🔀",
-        "pos": [2150.0, 20.0, -3150.0],
+        "pos": [3689.1, 20.0, -8867.9],
         "desc": "Massive multi-level Tokyo interchange and rotary",
     },
     {
@@ -109,7 +127,7 @@ SRP_POIS = [
         "shortName": "Ariake JCT",
         "type": "junction",
         "icon": "🔀",
-        "pos": [4865.0, 22.0, -4165.0],
+        "pos": [3490.7, 22.0, -3314.6],
         "desc": "Split between Wangan and Rainbow Bridge",
     },
     {
@@ -127,7 +145,7 @@ SRP_POIS = [
         "shortName": "Ginza (C1)",
         "type": "landmark",
         "icon": "🏙️",
-        "pos": [360.4, 18.0, -5787.4],
+        "pos": [1110.7, 18.0, -5727.6],
         "desc": "Heart of the C1 Expressway Loop",
     },
     {
@@ -149,30 +167,12 @@ SRP_POIS = [
         "desc": "Route 4 Shinjuku skyscrapers",
     },
     {
-        "id": "tsurumi_bridge",
-        "name": "Tsurumi Tsubasa Bridge (Route B)",
-        "shortName": "Tsurumi Tsubasa Bridge",
-        "type": "landmark",
-        "icon": "🌉",
-        "pos": [2920.0, 45.0, 4350.0],
-        "desc": "Iconic single-plane cable-stayed bridge on Bayshore Route North",
-    },
-    {
-        "id": "yokohama_bay_bridge",
-        "name": "Yokohama Bay Bridge (Route B)",
-        "shortName": "Yokohama Bay Bridge",
-        "type": "landmark",
-        "icon": "🌉",
-        "pos": [1050.0, 48.0, 5850.0],
-        "desc": "Massive 860m suspension bridge on Bayshore Route South",
-    },
-    {
         "id": "minato_mirai",
         "name": "Minato Mirai Yokohama (K3/K5)",
         "shortName": "Minato Mirai Yokohama",
         "type": "landmark",
         "icon": "🏙️",
-        "pos": [-550.0, 20.0, 5250.0],
+        "pos": [-10954.5, 20.0, 14006.5],
         "desc": "Yokohama waterfront skyline and K3/K5 expressway",
     },
 ]
