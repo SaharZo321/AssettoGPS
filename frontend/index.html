@@ -12,7 +12,7 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="/vendor/maplibre-gl/maplibre-gl.css?v=5.24.0">
   <link rel="stylesheet" href="/css/waze-theme.css?v=43">
-  <link rel="stylesheet" href="/css/style.css?v=43">
+  <link rel="stylesheet" href="/css/style.css?v=44">
 </head>
 <body>
   <div id="app-container">
@@ -21,6 +21,7 @@
     <div id="road-direction-status" class="road-direction-status direction-unknown" role="status" hidden>
       <span class="direction-icon">.</span><span>Finding carriageway...</span>
     </div>
+    <div id="route-guidance-status" class="route-guidance-status" role="status" hidden></div>
 
     <!-- Map Canvas (3D Tilted Ground Plane) -->
     <canvas id="map-canvas"></canvas>
@@ -155,6 +156,17 @@
             <p id="map-mode-note" class="map-mode-note" role="status">
               Exact offline SVG map. Route guidance is unavailable in Simple Map mode.
             </p>
+            <div id="navigation-route-controls" class="navigation-route-controls" hidden>
+              <label for="navigation-destination">ROUTE DESTINATION</label>
+              <div class="route-control-row">
+                <select id="navigation-destination" aria-label="Route destination">
+                  <option value="">Choose a destination...</option>
+                </select>
+                <button id="btn-start-route" type="button" disabled>Start</button>
+                <button id="btn-clear-route" type="button" hidden>Clear</button>
+              </div>
+              <p id="navigation-route-note">Choose a calibrated SRP landmark for offline directed routing.</p>
+            </div>
           </div>
 
           <!-- Theme Setting -->
@@ -364,9 +376,9 @@
   <script src="/js/interpolation.js?v=43"></script>
   <script src="/js/map-renderer.js?v=43"></script>
   <script src="/vendor/maplibre-gl/maplibre-gl.js?v=5.24.0"></script>
-  <script src="/js/navigation-map-renderer.js?v=43"></script>
-  <script src="/js/map-mode-controller.js?v=43"></script>
-  <script src="/js/navigation-ui.js?v=43"></script>
-  <script src="/js/app.js?v=43"></script>
+  <script src="/js/navigation-map-renderer.js?v=44"></script>
+  <script src="/js/map-mode-controller.js?v=44"></script>
+  <script src="/js/navigation-ui.js?v=44"></script>
+  <script src="/js/app.js?v=44"></script>
 </body>
 </html>

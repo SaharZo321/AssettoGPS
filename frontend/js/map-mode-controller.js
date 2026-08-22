@@ -123,6 +123,22 @@ class MapModeController {
     return !!enabled;
   }
 
+  getDestinations() {
+    return this.navigation?.getDestinations() || [];
+  }
+
+  startRoute(destinationName) {
+    if (this.mapMode !== "navigation" || !this.navigation) {
+      return { error: "Switch to Navigation Map before starting a route." };
+    }
+    return this.navigation.setDestination(destinationName);
+  }
+
+  clearRoute() {
+    if (!this.navigation) return { active: false };
+    return this.navigation.clearDestination();
+  }
+
   recenter() { this.activeRenderer.recenter(); }
 
   render(interpolator) { this.activeRenderer.render(interpolator); }

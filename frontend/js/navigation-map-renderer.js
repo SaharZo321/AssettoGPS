@@ -2,8 +2,8 @@
  * Offline MapLibre renderer for SRP.
  *
  * MapLibre renders the OSM extract.  Assetto Corsa coordinates are locally
- * calibrated and then snapped to OSM's directed motorway ways.  This keeps
- * the SDK/rendering concern separate from future route calculation.
+ * calibrated and then snapped to OSM's directed motorway ways. The same
+ * local extract provides the one-way graph used for offline route planning.
  */
 
 class SrpCoordinateCalibration {
@@ -188,6 +188,156 @@ class DirectedRoadMatcher {
   }
 }
 
+class DirectedRoadGraph {
+  constructor(featureCollection) {
+    this.nodes = new Map();
+    this.build(featureCollection);
+  }
+
+  key(point) {
+    return `${Number(point[0]).toFixed(7)},${Number(point[1]).toFixed(7)}`;
+  }
+
+  distance(from, to) {
+    const averageLatitude = ((from[1] + to[1]) * Math.PI) / 360;
+    return Math.hypot(
+      (from[0] - to[0]) * 111320 * Math.cos(averageLatitude),
+      (from[1] - to[1]) * 111320
+    );
+  }
+
+  ensureNode(point) {
+    const key = this.key(point);
+    if (!this.nodes.has(key)) this.nodes.set(key, { point, edges: [] });
+    return key;
+  }
+
+  addEdge(from, to, properties) {
+    const fromKey = this.ensureNode(from);
+    const toKey = this.ensureNode(to);
+    this.nodes.get(fromKey).edges.push({
+      to: toKey,
+      distance: this.distance(from, to),
+      properties,
+    });
+  }
+
+  build(featureCollection) {
+    for (const feature of featureCollection.features || []) {
+      const original = feature.geometry?.coordinates || [];
+      if (original.length < 2) continue;
+      const oneway = String(feature.properties?.oneway || "yes").toLowerCase();
+      const coordinates = oneway === "-1" ? [...original].reverse() : original;
+      for (let index = 0; index < coordinates.length - 1; index += 1) {
+        this.addEdge(coordinates[index], coordinates[index + 1], feature.properties);
+        if (!["yes", "1", "true", "-1"].includes(oneway)) {
+          this.addEdge(coordinates[index + 1], coordinates[index], feature.properties);
+        }
+      }
+    }
+  }
+
+  nearestNode(point) {
+    let nearestKey = null;
+    let nearestDistance = Infinity;
+    for (const [key, node] of this.nodes) {
+      const distance = this.distance(point, node.point);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestKey = key;
+      }
+    }
+    return { key: nearestKey, distance: nearestDistance };
+  }
+
+  pushHeap(heap, item) {
+    heap.push(item);
+    let index = heap.length - 1;
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (heap[parent][0] <= item[0]) break;
+      heap[index] = heap[parent];
+      index = parent;
+    }
+    heap[index] = item;
+  }
+
+  popHeap(heap) {
+    if (!heap.length) return null;
+    const root = heap[0];
+    const last = heap.pop();
+    if (heap.length && last) {
+      let index = 0;
+      while (true) {
+        const left = index * 2 + 1;
+        const right = left + 1;
+        if (left >= heap.length) break;
+        const child = right < heap.length && heap[right][0] < heap[left][0] ? right : left;
+        if (heap[child][0] >= last[0]) break;
+        heap[index] = heap[child];
+        index = child;
+      }
+      heap[index] = last;
+    }
+    return root;
+  }
+
+  route(startPoint, destinationPoint) {
+    const start = this.nearestNode(startPoint);
+    const destination = this.nearestNode(destinationPoint);
+    if (!start.key || !destination.key || start.distance > 1500 || destination.distance > 1500) {
+      return null;
+    }
+
+    const destinationNode = this.nodes.get(destination.key);
+    const distances = new Map([[start.key, 0]]);
+    const previous = new Map();
+    const queue = [];
+    this.pushHeap(queue, [this.distance(this.nodes.get(start.key).point, destinationNode.point), start.key, 0]);
+
+    while (queue.length) {
+      const current = this.popHeap(queue);
+      const currentKey = current[1];
+      const currentDistance = current[2];
+      if (currentDistance !== distances.get(currentKey)) continue;
+      if (currentKey === destination.key) break;
+
+      const node = this.nodes.get(currentKey);
+      for (const edge of node.edges) {
+        const candidate = currentDistance + edge.distance;
+        if (candidate >= (distances.get(edge.to) ?? Infinity)) continue;
+        distances.set(edge.to, candidate);
+        previous.set(edge.to, currentKey);
+        const heuristic = this.distance(this.nodes.get(edge.to).point, destinationNode.point);
+        this.pushHeap(queue, [candidate + heuristic, edge.to, candidate]);
+      }
+    }
+
+    if (!distances.has(destination.key)) return null;
+    const keys = [];
+    let key = destination.key;
+    while (key) {
+      keys.push(key);
+      if (key === start.key) break;
+      key = previous.get(key);
+    }
+    if (keys[keys.length - 1] !== start.key) return null;
+    keys.reverse();
+    const coordinates = keys.map((nodeKey) => this.nodes.get(nodeKey).point);
+    const remaining = new Array(coordinates.length).fill(0);
+    for (let index = coordinates.length - 2; index >= 0; index -= 1) {
+      remaining[index] = remaining[index + 1] + this.distance(coordinates[index], coordinates[index + 1]);
+    }
+    return {
+      coordinates,
+      remaining,
+      distanceM: distances.get(destination.key),
+      startSnapDistanceM: start.distance,
+      destinationSnapDistanceM: destination.distance,
+    };
+  }
+}
+
 class NavigationMapRenderer {
   constructor(containerId) {
     this.container = document.getElementById(containerId);
@@ -195,19 +345,28 @@ class NavigationMapRenderer {
     this.marker = null;
     this.calibration = null;
     this.matcher = null;
+    this.graph = null;
+    this.destinations = [];
+    this.activeRoute = null;
+    this.destination = null;
+    this.routeProgressIndex = 0;
+    this.lastRouteProgressUpdate = 0;
+    this.lastMarkerPoint = null;
     this.ready = false;
     this.active = false;
     this.trackInfo = null;
     this.currentTrackKey = "";
     this.orientationMode = "headingUp";
     this.autoZoomEnabled = localStorage.getItem("gps_auto_zoom") !== "false";
-    this.tiltAngle = localStorage.getItem("gps_3d_tilt") === "false" ? 0 : 49;
+    this.tiltedAngle = 60;
+    this.tiltAngle = localStorage.getItem("gps_3d_tilt") === "false" ? 0 : this.tiltedAngle;
     this.is3D = this.tiltAngle > 10;
     this.theme = document.documentElement.getAttribute("data-theme") || "dark";
     this.isFreeBrowsing = false;
     this.lastInteractionTime = 0;
     this.lastCameraUpdate = 0;
     this.statusElement = document.getElementById("road-direction-status");
+    this.guidanceElement = document.getElementById("route-guidance-status");
     this.recenterBtn = document.getElementById("btn-recenter");
     this.readyPromise = this.initialize();
   }
@@ -218,7 +377,8 @@ class NavigationMapRenderer {
       offline: true,
       mapMatching: true,
       directionDetection: true,
-      routing: false,
+      routing: !!this.graph,
+      activeRoute: !!this.activeRoute,
     };
   }
 
@@ -228,6 +388,10 @@ class NavigationMapRenderer {
       version: 8,
       sources: {
         "srp-roads": { type: "geojson", data: roads },
+        "active-route": {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        },
       },
       layers: [
         {
@@ -258,6 +422,28 @@ class NavigationMapRenderer {
               light ? "#f8fafc" : "#cbd5e1",
             ],
             "line-width": ["interpolate", ["linear"], ["zoom"], 9, 0.8, 13, 3, 17, 10],
+          },
+        },
+        {
+          id: "route-casing",
+          type: "line",
+          source: "active-route",
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: {
+            "line-color": "#082f49",
+            "line-opacity": 0.95,
+            "line-width": ["interpolate", ["linear"], ["zoom"], 9, 3, 13, 9, 17, 22],
+          },
+        },
+        {
+          id: "route-line",
+          type: "line",
+          source: "active-route",
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: {
+            "line-color": "#22d3ee",
+            "line-opacity": 0.95,
+            "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.5, 13, 5.5, 17, 14],
           },
         },
       ],
@@ -300,6 +486,11 @@ class NavigationMapRenderer {
     ]);
     this.calibration = new SrpCoordinateCalibration(calibration);
     this.matcher = new DirectedRoadMatcher(roads);
+    this.graph = new DirectedRoadGraph(roads);
+    this.destinations = (calibration.anchors || []).map((anchor) => ({
+      name: anchor.name,
+      point: [...anchor.osm],
+    }));
 
     this.map = new window.maplibregl.Map({
       container: this.container,
@@ -313,7 +504,8 @@ class NavigationMapRenderer {
       attributionControl: false,
       maplibreLogo: false,
       dragRotate: true,
-      touchPitch: true,
+      pitchWithRotate: false,
+      touchPitch: false,
     });
     this.map.addControl(
       new window.maplibregl.AttributionControl({
@@ -389,6 +581,7 @@ class NavigationMapRenderer {
     this.active = !!active;
     if (this.container) this.container.classList.toggle("active", this.active);
     if (this.statusElement) this.statusElement.hidden = !this.active;
+    if (this.guidanceElement) this.guidanceElement.hidden = !this.active || !this.activeRoute;
     if (this.active && this.map) {
       window.setTimeout(() => this.map.resize(), 0);
     }
@@ -432,14 +625,14 @@ class NavigationMapRenderer {
   }
 
   setTiltAngle(angle) {
-    this.tiltAngle = Math.max(0, Math.min(60, angle));
+    this.tiltAngle = Math.max(0, Math.min(this.tiltedAngle, angle));
     this.is3D = this.tiltAngle > 10;
     if (this.map) this.map.easeTo({ pitch: this.tiltAngle, duration: 250 });
     return this.is3D;
   }
 
   toggleTilt() {
-    return this.setTiltAngle(this.tiltAngle > 15 ? 0 : 49);
+    return this.setTiltAngle(this.is3D ? 0 : this.tiltedAngle);
   }
 
   setAutoZoom(enabled) {
@@ -461,6 +654,93 @@ class NavigationMapRenderer {
       : `<span class="direction-icon">↶</span><span>${roadName} · opposite direction</span>`;
   }
 
+  getDestinations() {
+    return this.destinations.map((destination) => destination.name);
+  }
+
+  routeGeoJson(coordinates) {
+    return {
+      type: "FeatureCollection",
+      features: coordinates.length > 1
+        ? [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates } }]
+        : [],
+    };
+  }
+
+  dispatchRouteChange(detail) {
+    window.dispatchEvent(new CustomEvent("gps-navigation-route-changed", { detail }));
+  }
+
+  setDestination(destinationName) {
+    const destination = this.destinations.find((item) => item.name === destinationName);
+    if (!destination) return { error: "Choose a valid destination." };
+    if (!this.graph || !this.lastMarkerPoint) return { error: "Waiting for a road position." };
+
+    const route = this.graph.route(this.lastMarkerPoint, destination.point);
+    if (!route) return { error: "No directed route is available from this carriageway." };
+    this.destination = destination;
+    this.activeRoute = route;
+    this.routeProgressIndex = 0;
+    const source = this.map?.getSource("active-route");
+    if (source) source.setData(this.routeGeoJson(route.coordinates));
+    if (this.guidanceElement) this.guidanceElement.hidden = !this.active;
+    const detail = {
+      active: true,
+      destination: destination.name,
+      distanceM: route.distanceM,
+      nodeCount: route.coordinates.length,
+    };
+    this.dispatchRouteChange(detail);
+    this.updateRouteProgress(this.lastMarkerPoint, true);
+    return detail;
+  }
+
+  clearDestination() {
+    this.destination = null;
+    this.activeRoute = null;
+    this.routeProgressIndex = 0;
+    const source = this.map?.getSource("active-route");
+    if (source) source.setData(this.routeGeoJson([]));
+    if (this.guidanceElement) this.guidanceElement.hidden = true;
+    const detail = { active: false };
+    this.dispatchRouteChange(detail);
+    return detail;
+  }
+
+  updateRouteProgress(point, force = false) {
+    if (!this.activeRoute || !this.destination || !this.guidanceElement) return;
+    const now = performance.now();
+    if (!force && now - this.lastRouteProgressUpdate < 300) return;
+    this.lastRouteProgressUpdate = now;
+
+    const coordinates = this.activeRoute.coordinates;
+    const start = Math.max(0, this.routeProgressIndex - 40);
+    const end = this.routeProgressIndex === 0
+      ? coordinates.length
+      : Math.min(coordinates.length, this.routeProgressIndex + 600);
+    let bestIndex = this.routeProgressIndex;
+    let bestDistance = Infinity;
+    for (let index = start; index < end; index += 1) {
+      const distance = this.graph.distance(point, coordinates[index]);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    }
+    this.routeProgressIndex = Math.max(this.routeProgressIndex, bestIndex);
+    const remaining = this.activeRoute.remaining[this.routeProgressIndex] || 0;
+    if (remaining < 80) {
+      this.guidanceElement.innerText = `${this.destination.name} - arriving`;
+      this.guidanceElement.classList.add("route-arriving");
+    } else {
+      const distanceText = remaining >= 1000
+        ? `${(remaining / 1000).toFixed(1)} km`
+        : `${Math.round(remaining)} m`;
+      this.guidanceElement.innerText = `${distanceText} to ${this.destination.name}`;
+      this.guidanceElement.classList.remove("route-arriving");
+    }
+  }
+
   render(interpolator) {
     if (!this.active || !this.ready || !this.map || !this.calibration) return;
     const position = interpolator.currentPos;
@@ -474,8 +754,10 @@ class NavigationMapRenderer {
     );
     const match = this.matcher.match(longitudeLatitude, vehicleBearing);
     const markerPoint = match?.point || longitudeLatitude;
+    this.lastMarkerPoint = markerPoint;
     this.marker.setLngLat(markerPoint).setRotation(vehicleBearing);
     this.setDirectionStatus(match);
+    this.updateRouteProgress(markerPoint);
 
     if (this.isFreeBrowsing && Date.now() - this.lastInteractionTime > 15000 && interpolator.currentSpeed > 5) {
       this.recenter();
@@ -498,4 +780,5 @@ class NavigationMapRenderer {
 
 window.SrpCoordinateCalibration = SrpCoordinateCalibration;
 window.DirectedRoadMatcher = DirectedRoadMatcher;
+window.DirectedRoadGraph = DirectedRoadGraph;
 window.NavigationMapRenderer = NavigationMapRenderer;

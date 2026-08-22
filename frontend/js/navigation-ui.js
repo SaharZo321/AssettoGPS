@@ -6,7 +6,7 @@ class NavigationUI {
   constructor() {
     this.speedUnit = localStorage.getItem("gps_speed_unit") || "kmh"; // "kmh" or "mph"
     this.mapMode = localStorage.getItem("gps_map_mode") === "navigation" ? "navigation" : "simple";
-    this.mapCapabilities = { routing: false, mapMatching: false, directionDetection: false };
+    this.mapCapabilities = { routing: false, activeRoute: false, mapMatching: false, directionDetection: false };
 
     // DOM cache
     this.navBanner = document.getElementById("nav-banner");
@@ -41,6 +41,7 @@ class NavigationUI {
     this.mapMode = mode === "navigation" ? "navigation" : "simple";
     this.mapCapabilities = {
       routing: capabilities.routing === true,
+      activeRoute: capabilities.activeRoute === true,
       mapMatching: capabilities.mapMatching === true,
       directionDetection: capabilities.directionDetection === true,
     };
@@ -84,10 +85,16 @@ class NavigationUI {
 
     // Do not advertise turn-by-turn navigation when the active renderer does
     // not provide it. POI and tunnel alerts remain useful in either mode.
-    if ((instruction.alertLevel || "normal") === "normal" && !this.mapCapabilities.routing) {
-      subtitle = this.mapMode === "navigation"
-        ? "Direction-aware map - routing not enabled"
-        : "Simple map - navigation unavailable";
+    if ((instruction.alertLevel || "normal") === "normal") {
+      if (this.mapMode !== "navigation") {
+        subtitle = "Simple map - navigation unavailable";
+      } else if (this.mapCapabilities.activeRoute) {
+        subtitle = "Offline directed route active";
+      } else if (this.mapCapabilities.routing) {
+        subtitle = "Direction-aware map - choose a destination";
+      } else {
+        subtitle = "Direction-aware map - routing unavailable";
+      }
     }
 
     if (this.navTitle) this.navTitle.innerText = title;

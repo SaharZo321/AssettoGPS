@@ -161,7 +161,7 @@ class App {
       if (error) {
         note.innerText = `Navigation Map could not start (${error}). Simple Map was restored.`;
       } else if (mode === "navigation") {
-        note.innerText = "Offline OSM carriageways and direction detection are active. Turn-by-turn routing is not enabled yet.";
+        note.innerText = "Offline OSM carriageways, direction detection, and directed route planning are active.";
       } else {
         note.innerText = "Exact offline SVG map. Route guidance is unavailable in Simple Map mode.";
       }
@@ -169,6 +169,44 @@ class App {
 
     if (this.ui && typeof this.ui.setMapCapabilities === "function") {
       this.ui.setMapCapabilities(capabilities, mode);
+    }
+
+    const routeControls = document.getElementById("navigation-route-controls");
+    if (routeControls) routeControls.hidden = mode !== "navigation" || !capabilities.routing;
+    if (mode === "navigation" && capabilities.routing) this.populateRouteDestinations();
+  }
+
+  populateRouteDestinations() {
+    const select = document.getElementById("navigation-destination");
+    if (!select) return;
+    const currentValue = select.value;
+    const destinations = this.renderer.getDestinations();
+    const existing = Array.from(select.options).slice(1).map((option) => option.value);
+    if (existing.length !== destinations.length || existing.some((name, index) => name !== destinations[index])) {
+      select.replaceChildren(new Option("Choose a destination...", ""));
+      destinations.forEach((name) => select.add(new Option(name, name)));
+      if (destinations.includes(currentValue)) select.value = currentValue;
+    }
+    const startButton = document.getElementById("btn-start-route");
+    if (startButton) startButton.disabled = !select.value;
+  }
+
+  updateRouteUi(detail = {}) {
+    const note = document.getElementById("navigation-route-note");
+    const clearButton = document.getElementById("btn-clear-route");
+    if (clearButton) clearButton.hidden = detail.active !== true;
+    if (!note) return;
+    if (detail.error) {
+      note.innerText = detail.error;
+      return;
+    }
+    if (detail.active) {
+      const distance = detail.distanceM >= 1000
+        ? `${(detail.distanceM / 1000).toFixed(1)} km`
+        : `${Math.round(detail.distanceM)} m`;
+      note.innerText = `Route to ${detail.destination} - ${distance}.`;
+    } else {
+      note.innerText = "Choose a calibrated SRP landmark for offline directed routing.";
     }
   }
 
@@ -261,6 +299,12 @@ class App {
       this.updateMapModeUi(event.detail || {});
       if (event.detail?.error) this.showToast("Navigation Map unavailable; Simple Map restored.");
     });
+    window.addEventListener("gps-navigation-route-changed", (event) => {
+      this.updateRouteUi(event.detail || {});
+      if (this.ui && typeof this.ui.setMapCapabilities === "function") {
+        this.ui.setMapCapabilities(this.renderer.capabilities, this.renderer.mapMode);
+      }
+    });
     const mapModeButtons = document.querySelectorAll("#control-map-mode .segmented-btn");
     mapModeButtons.forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -281,6 +325,32 @@ class App {
         }
       });
     });
+
+    const destinationSelect = document.getElementById("navigation-destination");
+    const startRouteButton = document.getElementById("btn-start-route");
+    const clearRouteButton = document.getElementById("btn-clear-route");
+    if (destinationSelect) {
+      destinationSelect.addEventListener("change", () => {
+        if (startRouteButton) startRouteButton.disabled = !destinationSelect.value;
+      });
+    }
+    if (startRouteButton && destinationSelect) {
+      startRouteButton.addEventListener("click", () => {
+        const result = this.renderer.startRoute(destinationSelect.value);
+        if (result.error) {
+          this.updateRouteUi(result);
+          this.showToast(result.error);
+        } else {
+          this.showToast(`Route to ${result.destination} started.`);
+        }
+      });
+    }
+    if (clearRouteButton) {
+      clearRouteButton.addEventListener("click", () => {
+        this.renderer.clearRoute();
+        this.showToast("Route cleared.");
+      });
+    }
 
     // 1. Display Theme Segmented Control (Night / Day / Auto)
     const currentThemeMode = this.renderer.themeMode || "auto";

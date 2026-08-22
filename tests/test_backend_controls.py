@@ -190,9 +190,21 @@ class SrpVectorMapTests(unittest.TestCase):
 
         self.assertIn('data-map-mode="simple"', index)
         self.assertIn('data-map-mode="navigation"', index)
+        self.assertIn('id="navigation-destination"', index)
+        self.assertIn('id="btn-start-route"', index)
         self.assertIn('/vendor/maplibre-gl/maplibre-gl.js', index)
         self.assertIn('localStorage.getItem("gps_map_mode")', controller)
         self.assertIn("OpenStreetMap contributors", license_text)
+
+    def test_navigation_map_includes_directed_route_planning(self):
+        renderer = (
+            server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("class DirectedRoadGraph", renderer)
+        self.assertIn("setDestination(destinationName)", renderer)
+        self.assertIn('getSource("active-route")', renderer)
+        self.assertIn("oneway", renderer)
 
 
 if __name__ == "__main__":
