@@ -1,78 +1,136 @@
-# 🏁 Assetto Corsa Waze/GPS Minimap (Second-Screen Addon)
+# AssettoGPS
 
-A **Waze / Apple CarPlay-style GPS Minimap & Telemetry Companion** for **Assetto Corsa**, designed specifically for **Shutoko Revival Project (SRP)** and circuit racing.
+AssettoGPS is a second-screen GPS, minimap, and telemetry app for Assetto Corsa.
+It is designed for phones, tablets, and secondary monitors, with additional
+navigation data for Shutoko Revival Project.
 
-Runs as a lightweight background server on your PC and displays smoothly on any **secondary monitor, Android phone, iPhone, iPad, or tablet** mounted to your sim rig!
+> Beta status: the packaged Windows server has automated tests and has been
+> launched successfully on Windows. The final in-game CSP launch still needs a
+> manual Assetto Corsa test. Linux/Proton support is experimental and has not
+> been tested on a Linux machine.
 
----
+## Install with Content Manager
 
-## ✨ Features
+1. Download the release ZIP. Do not extract it.
+2. Drag the ZIP file onto Content Manager.
+3. Click **Install** in Content Manager.
+4. Make sure Custom Shaders Patch is enabled.
+5. Start Assetto Corsa and open **Assetto GPS** from the in-game app sidebar.
 
-- 🏎️ **Optimized for Shutoko Revival Project (SRP) & Circuit Racing:**
-  - **Calibrated Tokyo Expressway POIs & Landmarks:** Accurate pins for **Daikoku PA**, **Tatsumi PA**, **Shibaura PA**, **Yoyogi PA**, **Heiwajima PA (N/S)**, **Daishi PA**, **Oi PA**, **Rainbow Bridge**, **Yokohama Bay Bridge**, **Tsurumi Tsubasa Bridge**, **Minato Mirai Yokohama**, **Shibuya Crossing**, **Shinjuku**, **Tokyo Tower**, **Hakozaki JCT**, and **Ariake JCT**.
-  - **Junction & Fork Guidance:** Upcoming exit and interchange cues.
-  - **Waze Speed Trap & Camera Alerts:** Audio/visual warning chimes when approaching Tokyo expressway Orbis speed cameras.
-  - **Speed-Adaptive Auto-Zoom:** Zooms out at 300+ km/h on the Wangan straight; zooms in close on technical C1 curves.
-- 📐 **3D Perspective & Dual Orientation Modes:**
-  - **3D Cockpit Perspective Tilt:** Deep 3D horizon tilt with atmospheric fog.
-  - **2D Billboard HUD Labels:** Labels remain 100% upright, crisp, and facing the driver with zero perspective distortion.
-  - **Heading-Up (Real GPS Mode):** Map smoothly rotates with your car heading (always driving upwards).
-  - **North-Up (Overview Mode):** Fixed map with rotating car cursor.
-  - **Dynamic Background GPS Grid:** Subtle coordinate grid squares that scale and tilt with the terrain.
-- 🌗 **Day & Night Display Themes:**
-  - **Midnight Dark Mode:** Obsidian background with glowing cyan telemetry.
-  - **Apple Maps Day Mode:** Clean daylight terrain with high-contrast road layouts.
-- 🚀 **Zero Game Impact:**
-  - Reads Assetto Corsa Windows Shared Memory (`acpmf_physics`, `acpmf_graphics`, `acpmf_static`) in an isolated background thread.
-  - **Zero CPU lag** or stuttering in AC.
-- 📱 **Universal Cross-Platform Display:**
-  - Works on any browser on your local Wi-Fi.
-  - Responsive layout optimized for secondary monitors, phones, and landscape rig mounts.
-  - **PWA & Wake Lock:** Fullscreen support without browser bars and keeps your mobile screen awake while driving.
-- 🎮 **Offline Mock Simulator:**
-  - Test and preview the GPS anytime without launching Assetto Corsa!
+That is the complete user installation. Python, uv, VBS scripts, batch files,
+and a separate server installation are not required. The ZIP contains this
+Content Manager layout:
 
----
+    apps/
+      lua/
+        AssettoGPS/
+          AssettoGPS.lua
+          icon.png
+          manifest.ini
+          server/
+            AssettoGPS.Server.exe
 
-## 🚀 Quick Start (Powered by `uv`)
+The Lua app uses CSP's process API to launch the bundled server. The server
+closes gracefully when requested from the app and is also tied to the Assetto
+Corsa process.
 
-1. **Double-click `run.bat`:**
-   - Automatically installs **`uv`** (if not already installed) in ~2 seconds.
-   - `uv` automatically provisions the Python runtime and dependencies in milliseconds.
-   - Starts the server and opens `http://localhost:8080` in your browser.
-2. **Or run manually from terminal:**
-   ```bash
-   uv run backend/server.py
-   ```
-3. **Connect your Phone or Tablet:**
-   - Point your phone camera at the **QR Code** in the terminal window, or type `http://<YOUR_PC_IP>:8080` into your phone's browser.
-   - Tap **"Add to Home Screen"** on iOS/Android for a fullscreen native app experience!
+## Use
 
----
+Open the Assetto GPS app in-game and wait for its status to show **ONLINE**.
+Open the displayed URL on another device connected to the same local network.
+The default address is:
 
-## 🛠️ Project Structure
+    http://<your-PC-address>:8080
 
-```
-AssettoMiniMap/
-├── pyproject.toml             # Modern uv package & dependency configuration
-├── backend/
-│   ├── server.py              # FastAPI + WebSocket server
-│   ├── ac_shared_memory.py    # Windows Shared Memory struct reader
-│   ├── ac_track_finder.py     # Automatic AC directory & map parser
-│   ├── navigation.py          # Turn, POI, and speed camera detection
-│   ├── mock_telemetry.py      # Simulated SRP driving generator
-│   └── requirements.txt       # Python dependencies
-├── frontend/
-│   ├── index.html             # Responsive HTML5 Web App (PWA)
-│   ├── manifest.json          # Mobile standalone manifest
-│   ├── css/
-│   │   ├── waze-theme.css     # Dark-mode Waze / CarPlay theme
-│   │   └── style.css          # Responsive layout for mobile & 2nd monitor
-│   └── js/
-│       ├── app.js             # WebSocket manager & event coordinator
-│       ├── map-renderer.js    # Canvas 2D 60fps rotating map engine
-│       ├── navigation-ui.js   # Waze turn cards, speedo, trip info
-│       ├── audio-alerts.js    # Synthesized Web Audio alert chimes
-│       └── interpolation.js   # 60fps motion smoothing
-└── run.bat                    # 1-Click Windows Launcher (uv-powered)
-```
+To use a different port, stop the server from the in-game app, enter a port
+from 1024 to 65535, press **Apply**, and start the server again. CSP saves the
+selected port for future Assetto Corsa sessions. The setting is disabled while
+the server is starting or online.
+
+Windows Firewall might ask whether to allow the server on private networks.
+Private-network access is required for a phone or tablet to connect. Do not
+allow it on public networks.
+
+## Platform support
+
+### Windows
+
+- Intended and built for the Windows version of Assetto Corsa.
+- The standalone release executable and its HTTP lifecycle are tested
+  automatically on Windows.
+- An in-game launch test is still required before the first public release.
+
+### Linux with Proton or Wine
+
+Assetto Corsa does not have a native Linux release. Linux support therefore
+means running the Windows game and this Windows server through Proton/Wine. The
+bundled EXE is intentional: launching it in the same compatibility environment
+as Assetto Corsa allows it to access AC's Win32 named shared-memory pages.
+
+This path is **beta and currently untested**. It is not a claim of native Linux
+support. The CSP launcher is expected to start the bundled EXE automatically.
+If that does not work, an experimental manual fallback is:
+
+    protontricks-launch --appid 244210 "/path/to/steamapps/common/assettocorsa/apps/lua/AssettoGPS/server/AssettoGPS.Server.exe"
+
+Please include the Proton version, CSP version, distribution, and server output
+when reporting a Linux issue.
+
+Relevant upstream documentation:
+
+- [Valve Proton](https://github.com/ValveSoftware/Proton)
+- [Protontricks launcher usage](https://github.com/Matoking/protontricks#usage)
+- [Custom Shaders Patch Lua SDK](https://github.com/ac-custom-shaders-patch/acc-lua-sdk)
+
+## Features
+
+- Real-time AC shared-memory telemetry over WebSockets
+- Browser UI for phones, tablets, and secondary displays
+- Heading-up and north-up map modes
+- SRP points of interest, junction guidance, and speed-camera warnings
+- Day/night display behavior and headlight synchronization
+- Mock telemetry mode for development without launching Assetto Corsa
+
+## Development
+
+Install [uv](https://docs.astral.sh/uv/) and run:
+
+    uv run backend/server.py --mock
+
+Then open http://127.0.0.1:8080.
+
+Run the tests:
+
+    uv run python -m unittest discover -s tests -v
+
+Build and test the drag-and-drop Content Manager ZIP on Windows:
+
+    ./scripts/build_release.ps1
+
+The output is build/AssettoGPS-0.2.0-beta.2.zip. The build script is only for
+project maintainers; players install the resulting ZIP directly through Content
+Manager.
+
+## Verification notes
+
+The release build performs:
+
+- backend unit tests;
+- a PyInstaller standalone Windows build;
+- a real packaged-server startup in mock mode;
+- HTTP status and protected-control checks;
+- graceful HTTP shutdown; and
+- ZIP staging in the Content Manager directory layout.
+
+Linux/Proton shared-memory access and CSP process launch cannot be confirmed
+without a Linux test machine and are explicitly marked untested.
+
+## Publishing checklist
+
+- Complete the manual Windows in-game test.
+- Obtain at least one Linux/Proton beta-tester report.
+- Select the public author name and an open-source or redistribution license.
+- Replace this beta version only after those checks are complete.
+
+No redistribution license has been selected yet. Add a LICENSE file before
+publishing the project publicly.

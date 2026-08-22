@@ -3,47 +3,47 @@ Assetto Corsa Waze/GPS Minimap Backend Server
 FastAPI + WebSockets + Automatic AC Track & Telemetry Streaming
 """
 
+import argparse
 import os
 import sys
 import json
 import asyncio
+import ipaddress
 import socket
 import threading
 import time
 from pathlib import Path
-from typing import List, Set, Dict, Any, Optional
+from typing import Set, Dict, Any, Optional
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Response
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, Response
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
-from ac_shared_memory import AssettoCorsaSharedMemory
+from ac_shared_memory import AssettoCorsaSharedMemory, ac_shared_memory_available
 from ac_track_finder import ACTrackFinder
 from navigation import NavigationEngine
 from mock_telemetry import MockTelemetryGenerator
 
-# Base paths
-BASE_DIR = Path(__file__).resolve().parent.parent
-FRONTEND_DIR = BASE_DIR / "frontend"
+# PyInstaller extracts bundled data into sys._MEIPASS. Source runs use the repo root.
+if getattr(sys, "frozen", False):
+    RUNTIME_ROOT = Path(sys._MEIPASS)
+else:
+    RUNTIME_ROOT = Path(__file__).resolve().parent.parent
+FRONTEND_DIR = RUNTIME_ROOT / "frontend"
 
 app = FastAPI(title="Assetto Corsa GPS Minimap Server")
-
-# Allow CORS for external devices
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Core singletons
 ac_shm = AssettoCorsaSharedMemory()
 track_finder = ACTrackFinder()
 nav_engine = NavigationEngine()
 mock_gen = MockTelemetryGenerator()
+
+CONTROL_HEADER_NAME = "x-assettogps-control"
+CONTROL_HEADER_VALUE = "1"
+shutdown_event = threading.Event()
+uvicorn_server: Optional[uvicorn.Server] = None
 
 # Active WebSocket connections
 active_connections: Set[WebSocket] = set()
@@ -67,46 +67,21 @@ environment_state = {
 }
 
 
-def start_udp_listener(port: int = 8088):
-    """Background listener for in-game AssettoGPS companion telemetry packets"""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.bind(("0.0.0.0", port))
-    except Exception:
-        try:
-            sock.bind(("127.0.0.1", port))
-        except Exception as e:
-            print(f"UDP listener bind error on port {port}: {e}")
-            return
-
-    while True:
-        try:
-            data, _ = sock.recvfrom(2048)
-            payload = json.loads(data.decode("utf-8"))
-            if "headlights" in payload:
-                environment_state["headlights"] = bool(payload["headlights"])
-            if "isNight" in payload:
-                environment_state["isNight"] = bool(payload["isNight"])
-            if "ambient" in payload:
-                try:
-                    environment_state["ambient"] = float(payload["ambient"])
-                except (ValueError, TypeError):
-                    pass
-            environment_state["source"] = "in-game"
-        except Exception:
-            pass
-
-
 def is_ac_game_active() -> bool:
-    """Checks if Assetto Corsa's active physics buffer exists in Windows RAM (0.001ms check)"""
-    if sys.platform != "win32":
-        return False
-    try:
-        m = mmap.mmap(0, 4, "acpmf_physics")
-        m.close()
-        return True
-    except Exception:
-        return False
+    """Return True only if Assetto Corsa has created all telemetry buffers."""
+    return ac_shared_memory_available()
+
+
+def request_server_shutdown(delay: float = 0.0):
+    """Ask Uvicorn to stop after an optional response-flush delay."""
+    def stop_server():
+        if delay > 0 and shutdown_event.wait(delay):
+            return
+        shutdown_event.set()
+        if uvicorn_server is not None:
+            uvicorn_server.should_exit = True
+
+    threading.Thread(target=stop_server, daemon=True).start()
 
 
 def ac_watchdog_loop():
@@ -114,8 +89,7 @@ def ac_watchdog_loop():
     has_seen_game = False
     inactive_count = 0
 
-    while True:
-        time.sleep(2.0)
+    while not shutdown_event.wait(2.0):
         try:
             is_active = is_ac_game_active()
             if is_active:
@@ -126,16 +100,35 @@ def ac_watchdog_loop():
                 # If game was active and now has exited for > 8 seconds
                 if inactive_count >= 4:
                     print("[-] Assetto Corsa closed. Auto-shutting down GPS server.")
-                    os._exit(0)
+                    request_server_shutdown()
+                    return
         except Exception:
             pass
 
 
 @app.on_event("startup")
 async def on_startup():
-    """Starts background UDP listener and watchdog daemon threads when server is ready"""
-    threading.Thread(target=start_udp_listener, daemon=True).start()
+    """Start the AC process watchdog when the server is ready."""
+    shutdown_event.clear()
     threading.Thread(target=ac_watchdog_loop, daemon=True).start()
+
+
+def is_loopback_host(host: Optional[str]) -> bool:
+    """Return whether a client address is a local loopback address."""
+    if not host:
+        return False
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def require_local_control(request: Request):
+    """Protect server-control endpoints from LAN and cross-site requests."""
+    client_host = request.client.host if request.client else None
+    control_value = request.headers.get(CONTROL_HEADER_NAME)
+    if not is_loopback_host(client_host) or control_value != CONTROL_HEADER_VALUE:
+        raise HTTPException(status_code=403, detail="Local AssettoGPS control request required")
 
 
 def get_local_ip() -> str:
@@ -300,8 +293,9 @@ async def set_mode(payload: Dict[str, str]):
 
 
 @app.post("/api/environment")
-async def set_environment(payload: Dict[str, Any]):
+async def set_environment(payload: Dict[str, Any], request: Request):
     """Receives in-game environmental lighting, headlights, and night status from CSP or companion mods"""
+    require_local_control(request)
     if "headlights" in payload:
         environment_state["headlights"] = bool(payload["headlights"])
     if "isNight" in payload:
@@ -315,13 +309,11 @@ async def set_environment(payload: Dict[str, Any]):
     return {"status": "ok", "environment": environment_state}
 
 
-@app.api_route("/api/shutdown", methods=["GET", "POST"])
-async def shutdown_server():
+@app.post("/api/shutdown")
+async def shutdown_server(request: Request):
     """Cleanly terminates the server process when stopped from in-game AC UI"""
-    def kill_process():
-        time.sleep(0.3)
-        os._exit(0)
-    threading.Thread(target=kill_process, daemon=True).start()
+    require_local_control(request)
+    request_server_shutdown(delay=0.3)
     return {"status": "shutting_down"}
 
 
@@ -431,32 +423,39 @@ if FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
 
 
-def sync_ac_plugin():
-    """Ensures the in-game AssettoGPS CSP Lua app is installed in the user's Assetto Corsa folder"""
-    try:
-        if track_finder.ac_root and track_finder.ac_root.exists():
-            target_lua_dir = track_finder.ac_root / "apps" / "lua" / "AssettoGPS"
-            target_lua_dir.mkdir(parents=True, exist_ok=True)
-            src_lua_dir = BASE_DIR / "ac_app" / "lua" / "AssettoGPS"
-            if src_lua_dir.exists():
-                import shutil
-                for f in src_lua_dir.iterdir():
-                    shutil.copyfile(f, target_lua_dir / f.name)
-                print(f"  [+] In-Game AC Lua App Synced: {target_lua_dir}")
-    except Exception as e:
-        print(f"Could not auto-sync AC in-game plugin: {e}")
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="AssettoGPS local telemetry server")
+    parser.add_argument("--host", default=os.environ.get("HOST", "0.0.0.0"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8080")))
+    parser.add_argument(
+        "--mock",
+        action="store_true",
+        help="Use generated telemetry without requiring Assetto Corsa",
+    )
+    return parser.parse_args(argv)
 
 
-def main():
-    sync_ac_plugin()
-    port = int(os.environ.get("PORT", 8080))
-    print_startup_banner(port)
-    uvicorn.run(
+def main(argv=None):
+    global uvicorn_server
+
+    args = parse_args(argv)
+    if args.mock:
+        server_state["mode"] = "mock"
+    print_startup_banner(args.port)
+    shutdown_event.clear()
+    config = uvicorn.Config(
         app,
-        host="0.0.0.0",
-        port=port,
+        host=args.host,
+        port=args.port,
         log_level="warning",
     )
+    uvicorn_server = uvicorn.Server(config)
+    try:
+        uvicorn_server.run()
+    finally:
+        shutdown_event.set()
+        ac_shm.disconnect()
+        uvicorn_server = None
 
 
 if __name__ == "__main__":

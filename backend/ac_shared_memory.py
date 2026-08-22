@@ -9,6 +9,40 @@ import math
 import sys
 from typing import Optional, Dict, Any
 
+
+FILE_MAP_READ = 0x0004
+AC_SHARED_MEMORY_NAMES = (
+    'acpmf_physics',
+    'acpmf_graphics',
+    'acpmf_static',
+)
+
+
+def named_mapping_exists(name: str) -> bool:
+    """Return True only when an existing Win32 named mapping can be opened."""
+    if sys.platform != 'win32':
+        return False
+
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    open_file_mapping = kernel32.OpenFileMappingW
+    open_file_mapping.argtypes = (ctypes.c_uint32, ctypes.c_bool, ctypes.c_wchar_p)
+    open_file_mapping.restype = ctypes.c_void_p
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = (ctypes.c_void_p,)
+    close_handle.restype = ctypes.c_bool
+
+    handle = open_file_mapping(FILE_MAP_READ, False, name)
+    if not handle:
+        return False
+
+    close_handle(handle)
+    return True
+
+
+def ac_shared_memory_available() -> bool:
+    """Return True only when all AC shared-memory pages already exist."""
+    return all(named_mapping_exists(name) for name in AC_SHARED_MEMORY_NAMES)
+
 # AC Flag Enumerations
 AC_FLAG_NONE = 0
 AC_FLAG_BLUE = 1
@@ -193,11 +227,28 @@ class AssettoCorsaSharedMemory:
         """Attempts to open AC memory maps on Windows"""
         if sys.platform != "win32":
             return False
+        if not ac_shared_memory_available():
+            return False
 
         try:
-            self.phys_mmap = mmap.mmap(0, ctypes.sizeof(SPageFilePhysics), "acpmf_physics")
-            self.gfx_mmap = mmap.mmap(0, ctypes.sizeof(SPageFileGraphic), "acpmf_graphics")
-            self.stat_mmap = mmap.mmap(0, ctypes.sizeof(SPageFileStatic), "acpmf_static")
+            self.phys_mmap = mmap.mmap(
+                0,
+                ctypes.sizeof(SPageFilePhysics),
+                "acpmf_physics",
+                access=mmap.ACCESS_READ,
+            )
+            self.gfx_mmap = mmap.mmap(
+                0,
+                ctypes.sizeof(SPageFileGraphic),
+                "acpmf_graphics",
+                access=mmap.ACCESS_READ,
+            )
+            self.stat_mmap = mmap.mmap(
+                0,
+                ctypes.sizeof(SPageFileStatic),
+                "acpmf_static",
+                access=mmap.ACCESS_READ,
+            )
             self.is_connected = True
             return True
         except Exception:
@@ -225,9 +276,9 @@ class AssettoCorsaSharedMemory:
                 return None
 
         try:
-            phys = SPageFilePhysics.from_buffer(self.phys_mmap)
-            gfx = SPageFileGraphic.from_buffer(self.gfx_mmap)
-            stat = SPageFileStatic.from_buffer(self.stat_mmap)
+            phys = SPageFilePhysics.from_buffer_copy(self.phys_mmap)
+            gfx = SPageFileGraphic.from_buffer_copy(self.gfx_mmap)
+            stat = SPageFileStatic.from_buffer_copy(self.stat_mmap)
 
             # Convert gear: AC uses 0=R, 1=N, 2=1st, 3=2nd...
             raw_gear = phys.gear
