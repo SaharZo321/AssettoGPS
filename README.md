@@ -115,7 +115,7 @@ Build and test the drag-and-drop Content Manager ZIP on Windows:
 
     ./scripts/build_release.ps1
 
-The output is build/AssettoGPS-0.2.0-beta.7.zip. The build script is only for
+The output is build/AssettoGPS-0.2.0-beta.8.zip. The build script is only for
 project maintainers; players install the resulting ZIP directly through Content
 Manager.
 

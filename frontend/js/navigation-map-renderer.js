@@ -389,6 +389,9 @@ class NavigationMapRenderer {
     this.displayPoint = null;
     this.displayBearing = null;
     this.lastRenderTime = 0;
+    this.courseReferencePoint = null;
+    this.courseBearing = null;
+    this.lastTravelBearing = null;
     this.ready = false;
     this.active = false;
     this.trackInfo = null;
@@ -657,7 +660,52 @@ class NavigationMapRenderer {
 
   toggleOrientation() {
     this.orientationMode = this.orientationMode === "headingUp" ? "northUp" : "headingUp";
+    // Orientation is a camera command, so it must leave free-browse mode and
+    // apply immediately. Otherwise a previous pan/rotate gesture makes the
+    // button appear to do nothing until the automatic recenter timeout.
+    this.recenter();
+    if (this.map && this.displayBearing !== null) {
+      this.map.jumpTo({
+        bearing: this.orientationMode === "headingUp" ? this.displayBearing : 0,
+      });
+    }
     return this.orientationMode;
+  }
+
+  resolveTravelBearing(point, telemetryBearing) {
+    if (!this.courseReferencePoint) {
+      this.courseReferencePoint = [...point];
+      this.courseBearing = telemetryBearing;
+      return telemetryBearing;
+    }
+
+    const movement = DirectedRoadMatcher.distance(this.courseReferencePoint, point);
+    if (movement > 500) {
+      // Session restarts and teleports must not be interpreted as a heading.
+      this.courseReferencePoint = [...point];
+      this.courseBearing = telemetryBearing;
+    } else if (movement >= 0.8) {
+      const measuredBearing = DirectedRoadMatcher.bearing(this.courseReferencePoint, point);
+      const bearingDifference = DirectedRoadMatcher.normalizeAngle(
+        measuredBearing - this.courseBearing
+      );
+      if (Math.abs(bearingDifference) > 120) {
+        // Some telemetry sources expose the rearward vehicle axis. A nearly
+        // opposite course is a convention mismatch, not a 180-degree corner.
+        this.courseBearing = measuredBearing;
+      } else {
+        const factor = Math.min(0.55, Math.max(0.18, movement / 10));
+        this.courseBearing = DirectedRoadMatcher.normalizeAngle(
+          this.courseBearing + bearingDifference * factor
+        );
+      }
+      this.courseReferencePoint = [...point];
+    }
+
+    // Course-over-ground is independent of whether a telemetry provider
+    // defines heading as the car's forward or rearward axis. Once measured,
+    // retain the last stable course while the vehicle is stopped.
+    return this.courseBearing ?? telemetryBearing;
   }
 
   setTiltAngle(angle) {
@@ -783,14 +831,19 @@ class NavigationMapRenderer {
     if (!position || position.length < 3) return;
 
     const longitudeLatitude = this.calibration.toLngLat(position[0], position[2]);
-    const vehicleBearing = this.calibration.headingToBearing(
+    const telemetryBearing = this.calibration.headingToBearing(
       position[0],
       position[2],
       interpolator.currentHeading
     );
-    const match = this.matcher.match(longitudeLatitude, vehicleBearing);
+    const travelBearing = this.resolveTravelBearing(
+      longitudeLatitude,
+      telemetryBearing
+    );
+    this.lastTravelBearing = travelBearing;
+    const match = this.matcher.match(longitudeLatitude, travelBearing);
     const targetPoint = match?.point || longitudeLatitude;
-    const targetBearing = match?.alignedBearing ?? vehicleBearing;
+    const targetBearing = match?.alignedBearing ?? travelBearing;
     const now = performance.now();
     const deltaSeconds = this.lastRenderTime
       ? Math.min((now - this.lastRenderTime) / 1000, 0.1)

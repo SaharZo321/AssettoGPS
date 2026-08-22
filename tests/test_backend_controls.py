@@ -231,6 +231,8 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertIn('rotationAlignment: "viewport"', renderer)
         self.assertIn('pitchAlignment: "viewport"', renderer)
         self.assertIn("match?.alignedBearing", renderer)
+        self.assertIn("resolveTravelBearing", renderer)
+        self.assertIn("this.recenter();", renderer)
 
 
 if __name__ == "__main__":

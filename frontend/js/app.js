@@ -227,10 +227,17 @@ class App {
     };
 
     if (btnOrientation) {
-      btnOrientation.innerHTML = ORIENTATION_ICONS[this.renderer.orientationMode] || ORIENTATION_ICONS.headingUp;
+      const updateOrientationButton = (mode) => {
+        btnOrientation.innerHTML = ORIENTATION_ICONS[mode] || ORIENTATION_ICONS.headingUp;
+        const label = mode === "northUp" ? "Map orientation: North Up" : "Map orientation: Heading Up";
+        btnOrientation.title = label;
+        btnOrientation.setAttribute("aria-label", label);
+        btnOrientation.classList.toggle("active", mode === "northUp");
+      };
+      updateOrientationButton(this.renderer.orientationMode);
       btnOrientation.addEventListener("click", () => {
         const mode = this.renderer.toggleOrientation();
-        btnOrientation.innerHTML = ORIENTATION_ICONS[mode];
+        updateOrientationButton(mode);
       });
     }
 
