@@ -6,14 +6,17 @@ local server_port = 8080
 local local_ip = "127.0.0.1"
 local server_running = false
 local auto_boot_done = false
+local manually_stopped = false
 local last_check = 0
 local last_lighting_check = 0
 
--- Asynchronously ping local server status (zero blocking, zero cmd windows)
+-- Asynchronously ping local server status
 local function checkServerStatus(callback)
   web.get("http://127.0.0.1:" .. server_port .. "/api/status", function(err, response)
     if not err and response and response.status == 200 then
-      server_running = true
+      if not manually_stopped then
+        server_running = true
+      end
       if response.body then
         local ip = response.body:match('"localIp"%s*:%s*"([^"]+)"')
         if ip and #ip > 6 then
@@ -28,25 +31,29 @@ local function checkServerStatus(callback)
   end)
 end
 
--- Start server in background (runs once silently)
+-- Start server in background via silent detached launcher
 local function startServer()
-  local cmd = 'cd /d "' .. server_dir .. '" && start "" /B "%USERPROFILE%\\.local\\bin\\uv.exe" run backend\\server.py'
-  os.execute(cmd)
+  manually_stopped = false
+  server_running = true
+  os.execute('wscript.exe "' .. server_dir .. '\\backend\\start_silent.vbs"')
   setTimeout(function()
     checkServerStatus()
   end, 1.5)
 end
 
--- Stop server
+-- Stop server cleanly via HTTP shutdown endpoint
 local function stopServer()
-  os.execute('taskkill /F /IM python.exe /FI "WINDOWTITLE eq *server.py*" 2>nul')
+  manually_stopped = true
   server_running = false
+  web.get("http://127.0.0.1:" .. server_port .. "/api/shutdown", function(err, response)
+    server_running = false
+  end)
 end
 
 -- One-shot silent auto-boot on startup
 setTimeout(function()
   checkServerStatus(function(alive)
-    if not alive and not auto_boot_done then
+    if not alive and not auto_boot_done and not manually_stopped then
       auto_boot_done = true
       startServer()
     end
@@ -75,17 +82,17 @@ function windowMain(dt)
   ui.sameLine()
   ui.textColored(phone_url, rgbm(0.22, 0.74, 0.97, 1.0))
 
-  if ui.button("Copy URL", vec2(110, 24)) then
+  if ui.button("Copy URL", vec2(100, 24)) then
     ui.setClipboardText(phone_url)
   end
 
   ui.sameLine()
   if server_running then
-    if ui.button("Stop Server", vec2(110, 24)) then
+    if ui.button("Stop Server", vec2(100, 24)) then
       stopServer()
     end
   else
-    if ui.button("Start Server", vec2(110, 24)) then
+    if ui.button("Start Server", vec2(100, 24)) then
       startServer()
     end
   end
@@ -112,8 +119,8 @@ function script.update(dt)
     local car = ac.getCar(0)
     if car and server_running then
       local headlights = car.headlightsActive
-      web.post('http://127.0.0.1:' .. server_port .. '/api/environment', {
-        headers = { ['Content-Type'] = 'application/json' },
+      web.post("http://127.0.0.1:" .. server_port .. "/api/environment", {
+        headers = { ["Content-Type"] = "application/json" },
         body = string.format('{"headlights": %s, "isNight": %s, "source": "csp-lua"}',
           headlights and "true" or "false",
           headlights and "true" or "false"
@@ -125,6 +132,8 @@ function script.update(dt)
   -- Async heartbeat every 4 seconds (zero blocking)
   if now - last_check > 4.0 then
     last_check = now
-    checkServerStatus()
+    if not manually_stopped then
+      checkServerStatus()
+    end
   end
 end

@@ -97,9 +97,45 @@ def start_udp_listener(port: int = 8088):
             pass
 
 
-# Start UDP listener daemon thread
-udp_thread = threading.Thread(target=start_udp_listener, daemon=True)
-udp_thread.start()
+def is_ac_game_active() -> bool:
+    """Checks if Assetto Corsa's active physics buffer exists in Windows RAM (0.001ms check)"""
+    if sys.platform != "win32":
+        return False
+    try:
+        m = mmap.mmap(0, 4, "acpmf_physics")
+        m.close()
+        return True
+    except Exception:
+        return False
+
+
+def ac_watchdog_loop():
+    """Monitors Assetto Corsa session. Once active, if AC closes, auto-shuts down server cleanly."""
+    has_seen_game = False
+    inactive_count = 0
+
+    while True:
+        time.sleep(2.0)
+        try:
+            is_active = is_ac_game_active()
+            if is_active:
+                has_seen_game = True
+                inactive_count = 0
+            elif has_seen_game:
+                inactive_count += 1
+                # If game was active and now has exited for > 8 seconds
+                if inactive_count >= 4:
+                    print("[-] Assetto Corsa closed. Auto-shutting down GPS server.")
+                    os._exit(0)
+        except Exception:
+            pass
+
+
+@app.on_event("startup")
+async def on_startup():
+    """Starts background UDP listener and watchdog daemon threads when server is ready"""
+    threading.Thread(target=start_udp_listener, daemon=True).start()
+    threading.Thread(target=ac_watchdog_loop, daemon=True).start()
 
 
 def get_local_ip() -> str:
@@ -122,12 +158,12 @@ def print_startup_banner(port: int = 8080):
     network_url = f"http://{local_ip}:{port}"
 
     print("=" * 65)
-    print("  🏁 ASSETTO CORSA WAZE/GPS MINIMAP SERVER")
+    print("  ASSETTO CORSA GPS MINIMAP SERVER")
     print("=" * 65)
-    print(f"  🖥️  Local 2nd Screen URL : {local_url}")
-    print(f"  📱 Phone / Tablet URL    : {network_url}")
+    print(f"  Local URL : {local_url}")
+    print(f"  Phone / Tablet URL : {network_url}")
     print("-" * 65)
-    print("  👉 Scan with your Phone Camera to open the GPS dashboard:")
+    print("  Open on your mobile browser / tablet:")
     try:
         import qrcode
 
@@ -138,7 +174,7 @@ def print_startup_banner(port: int = 8080):
     except Exception:
         print(f"  [QR Code Generator: open {network_url} in mobile browser]")
     print("=" * 65)
-    print("  ⌨️  Press [Ctrl + R] or [R] in this terminal to reset the session!")
+    print("  Press [Ctrl + R] or [R] in this terminal to reset the session!")
     print("  Telemetry engine running... Ready for connections!\n")
 
 
@@ -279,6 +315,16 @@ async def set_environment(payload: Dict[str, Any]):
     return {"status": "ok", "environment": environment_state}
 
 
+@app.api_route("/api/shutdown", methods=["GET", "POST"])
+async def shutdown_server():
+    """Cleanly terminates the server process when stopped from in-game AC UI"""
+    def kill_process():
+        time.sleep(0.3)
+        os._exit(0)
+    threading.Thread(target=kill_process, daemon=True).start()
+    return {"status": "shutting_down"}
+
+
 @app.get("/api/environment")
 async def get_environment():
     """Returns current environmental lighting state"""
@@ -386,17 +432,17 @@ if FRONTEND_DIR.exists():
 
 
 def sync_ac_plugin():
-    """Ensures the in-game AssettoGPS Python app is installed in the user's Assetto Corsa folder"""
+    """Ensures the in-game AssettoGPS CSP Lua app is installed in the user's Assetto Corsa folder"""
     try:
         if track_finder.ac_root and track_finder.ac_root.exists():
-            target_dir = track_finder.ac_root / "apps" / "python" / "AssettoGPS"
-            target_dir.mkdir(parents=True, exist_ok=True)
-            src_file = BASE_DIR / "ac_app" / "AssettoGPS" / "AssettoGPS.py"
-            dst_file = target_dir / "AssettoGPS.py"
-            if src_file.exists():
+            target_lua_dir = track_finder.ac_root / "apps" / "lua" / "AssettoGPS"
+            target_lua_dir.mkdir(parents=True, exist_ok=True)
+            src_lua_dir = BASE_DIR / "ac_app" / "lua" / "AssettoGPS"
+            if src_lua_dir.exists():
                 import shutil
-                shutil.copyfile(src_file, dst_file)
-                print(f"  🎮 In-Game AC App Synced: {dst_file}")
+                for f in src_lua_dir.iterdir():
+                    shutil.copyfile(f, target_lua_dir / f.name)
+                print(f"  [+] In-Game AC Lua App Synced: {target_lua_dir}")
     except Exception as e:
         print(f"Could not auto-sync AC in-game plugin: {e}")
 
@@ -405,13 +451,10 @@ def main():
     sync_ac_plugin()
     port = int(os.environ.get("PORT", 8080))
     print_startup_banner(port)
-    backend_dir = str(Path(__file__).resolve().parent)
     uvicorn.run(
-        "server:app",
+        app,
         host="0.0.0.0",
         port=port,
-        reload=True,
-        reload_dirs=[backend_dir],
         log_level="warning",
     )
 
