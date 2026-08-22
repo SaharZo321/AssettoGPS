@@ -1,5 +1,7 @@
 # AssettoGPS
 
+[![CI](https://github.com/SaharZo321/AssettoGPS/actions/workflows/ci.yml/badge.svg)](https://github.com/SaharZo321/AssettoGPS/actions/workflows/ci.yml)
+
 AssettoGPS is a second-screen GPS, minimap, and telemetry app for Assetto Corsa.
 It is designed for phones, tablets, and secondary monitors, with additional
 navigation data for Shutoko Revival Project.
@@ -101,14 +103,30 @@ Relevant upstream documentation:
 
 ## Development
 
-Install [uv](https://docs.astral.sh/uv/) and run:
+Install [Node.js](https://nodejs.org/) 22.13 or newer and
+[uv](https://docs.astral.sh/uv/), then enable the repository-pinned pnpm version,
+install the locked frontend dependencies, and compile the TypeScript sources:
+
+    corepack enable
+    pnpm install --frozen-lockfile
+    pnpm run build
+
+The frontend build also copies the pinned MapLibre ESM, worker, CSS, and license
+files from `node_modules` into ignored offline runtime directories.
+
+Start the development server:
 
     uv run backend/dev_server.py
 
 Then open http://127.0.0.1:8080.
 
+For frontend development, keep the compiler running in a second terminal:
+
+    pnpm run watch:frontend
+
 Run the tests:
 
+    pnpm run check
     uv run python -m unittest discover -s tests -v
     uv run python scripts/verify_srp_routing.py
 
@@ -124,6 +142,7 @@ Manager.
 
 The release build performs:
 
+- a clean, strict TypeScript frontend build;
 - backend unit tests;
 - SRP connector, connectivity, destination-reachability, and golden-route checks;
 - a PyInstaller standalone Windows build;

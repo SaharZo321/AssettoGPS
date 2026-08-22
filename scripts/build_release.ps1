@@ -9,18 +9,42 @@ $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $buildRoot = Join-Path $repoRoot "build"
 $workPath = Join-Path $buildRoot "pyinstaller-work"
 $distPath = Join-Path $buildRoot "pyinstaller-dist"
+$frontendRuntime = Join-Path $buildRoot "frontend-runtime"
 $stageRoot = Join-Path $buildRoot "release"
 $appStage = Join-Path $stageRoot "apps\lua\AssettoGPS"
 $serverStage = Join-Path $appStage "server"
 $zipPath = Join-Path $buildRoot "AssettoGPS-$Version.zip"
-$frontendData = "$((Join-Path $repoRoot "frontend"));frontend"
+$frontendData = "$frontendRuntime;frontend"
 
-if (-not $stageRoot.StartsWith($repoRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+if (
+    -not $stageRoot.StartsWith($repoRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+    -not $frontendRuntime.StartsWith($buildRoot, [System.StringComparison]::OrdinalIgnoreCase)
+) {
     throw "Release staging path escaped the repository: $stageRoot"
 }
 
 Push-Location $repoRoot
 try {
+    & corepack.cmd pnpm install --frozen-lockfile
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Frontend dependency installation failed.'
+    }
+    & corepack.cmd pnpm run build
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Frontend TypeScript build failed.'
+    }
+
+    if (Test-Path -LiteralPath $frontendRuntime) {
+        Remove-Item -LiteralPath $frontendRuntime -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $frontendRuntime -Force | Out-Null
+    foreach ($directory in @("assets", "css", "js", "vendor")) {
+        Copy-Item -LiteralPath (Join-Path $repoRoot "frontend\$directory") -Destination $frontendRuntime -Recurse -Force
+    }
+    foreach ($file in @("index.html", "manifest.json")) {
+        Copy-Item -LiteralPath (Join-Path $repoRoot "frontend\$file") -Destination $frontendRuntime -Force
+    }
+
     uv sync --group build --locked
     if ($LASTEXITCODE -ne 0) {
         throw "Dependency synchronization failed."

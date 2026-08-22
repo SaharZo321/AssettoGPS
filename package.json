@@ -1,0 +1,24 @@
+{
+  "name": "assetto-minimap",
+  "version": "0.2.0-beta.16",
+  "private": true,
+  "description": "Frontend build tooling for AssettoGPS",
+  "packageManager": "pnpm@11.22.0",
+  "scripts": {
+    "build": "node scripts/clean_frontend.mjs && tsc --project tsconfig.json && node scripts/copy_frontend_vendor.mjs",
+    "check": "tsc --project tsconfig.json --noEmit",
+    "clean:frontend": "node scripts/clean_frontend.mjs",
+    "vendor:frontend": "node scripts/copy_frontend_vendor.mjs",
+    "watch:frontend": "node scripts/copy_frontend_vendor.mjs && tsc --project tsconfig.json --watch --preserveWatchOutput"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "devDependencies": {
+    "@types/geojson": "7946.0.16",
+    "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "maplibre-gl": "6.5.0"
+  }
+}

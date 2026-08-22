@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "24"
+  PYTHON_VERSION: "3.11"
+  UV_VERSION: "0.12.5"
+
+jobs:
+  checks:
+    name: Source checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check and build frontend
+        run: |
+          pnpm run check
+          pnpm run build
+
+      - name: Install backend dependencies
+        run: uv sync --locked
+
+      - name: Run unit tests
+        run: uv run python -m unittest discover -s tests -v
+
+      - name: Audit SRP routing
+        run: uv run python scripts/verify_srp_routing.py
+
+      - name: Smoke test source server
+        run: uv run python tests/smoke_server.py uv run python backend/server.py
+
+  windows-release:
+    name: Windows release
+    needs:
+      - checks
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Build and smoke test release
+        shell: pwsh
+        run: ./scripts/build_release.ps1 -SkipTests
+
+      - name: Upload Content Manager ZIP
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: AssettoGPS-windows-${{ github.sha }}
+          path: build/AssettoGPS-*.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 14

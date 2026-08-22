@@ -236,7 +236,7 @@ class SrpVectorMapTests(unittest.TestCase):
 
     def test_game_navigation_uses_private_game_projection(self):
         renderer = (
-            server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
+            server.FRONTEND_DIR / "src" / "navigation-map-renderer.ts"
         ).read_text(encoding="utf-8")
 
         self.assertIn("class SrpGameProjection", renderer)
@@ -247,12 +247,14 @@ class SrpVectorMapTests(unittest.TestCase):
 
     def test_frontend_is_navigation_only_and_uses_local_maplibre(self):
         index = (server.FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
-        controller = (server.FRONTEND_DIR / "js" / "navigation-controller.js").read_text(
+        controller = (server.FRONTEND_DIR / "src" / "navigation-controller.ts").read_text(
             encoding="utf-8"
         )
         self.assertIn('id="navigation-destination"', index)
         self.assertIn('id="btn-start-route"', index)
-        self.assertIn('/vendor/maplibre-gl/maplibre-gl.js', index)
+        self.assertIn('/vendor/maplibre-gl/maplibre-gl.mjs?v=6.5.0', index)
+        self.assertIn('/js/maplibre-bootstrap.js', index)
+        self.assertNotIn('/vendor/maplibre-gl/maplibre-gl.js', index)
         self.assertIn("class NavigationController", controller)
         self.assertNotIn("Simple Map", index)
         self.assertNotIn('id="map-canvas"', index)
@@ -262,27 +264,47 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertNotIn("data-mode", index)
         self.assertNotIn(
             "/api/mode",
-            (server.FRONTEND_DIR / "js" / "app.js").read_text(encoding="utf-8"),
+            (server.FRONTEND_DIR / "src" / "app.ts").read_text(encoding="utf-8"),
         )
-        self.assertFalse((server.FRONTEND_DIR / "js" / "map-renderer.js").exists())
+        self.assertFalse((server.FRONTEND_DIR / "src" / "map-renderer.ts").exists())
         self.assertFalse((server.FRONTEND_DIR / "assets" / "maps" / "srp.svg").exists())
+
+    def test_maplibre_is_pinned_and_generated_for_offline_runtime(self):
+        repository_root = server.FRONTEND_DIR.parent
+        package_manifest = json.loads(
+            (repository_root / "package.json").read_text(encoding="utf-8")
+        )
+        copy_script = (
+            repository_root / "scripts" / "copy_frontend_vendor.mjs"
+        ).read_text(encoding="utf-8")
+
+        self.assertEqual(package_manifest["packageManager"], "pnpm@11.22.0")
+        self.assertEqual(package_manifest["dependencies"]["maplibre-gl"], "6.5.0")
+        for asset in (
+            "maplibre-gl.mjs",
+            "maplibre-gl-shared.mjs",
+            "maplibre-gl-worker.mjs",
+            "maplibre-gl.css",
+            "LICENSE.txt",
+        ):
+            self.assertIn(asset, copy_script)
 
     def test_navigation_map_includes_directed_route_planning(self):
         renderer = (
-            server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
+            server.FRONTEND_DIR / "src" / "navigation-map-renderer.ts"
         ).read_text(encoding="utf-8")
 
         self.assertIn("class DirectedRoadGraph", renderer)
         self.assertIn("connectIntersectionRoutes", renderer)
-        self.assertIn("setDestination(destinationName)", renderer)
-        self.assertIn('getSource("active-route")', renderer)
+        self.assertIn("setDestination(destinationName: string)", renderer)
+        self.assertIn('getSource<MapLibreGeoJSONSource>("active-route")', renderer)
         self.assertIn("oneway", renderer)
         self.assertIn('rotationAlignment: "viewport"', renderer)
         self.assertIn('pitchAlignment: "viewport"', renderer)
 
     def test_navigation_route_progress_and_recalculation_are_enabled(self):
         renderer = (
-            server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
+            server.FRONTEND_DIR / "src" / "navigation-map-renderer.ts"
         ).read_text(encoding="utf-8")
 
         self.assertIn("routeCandidates", renderer)
@@ -296,9 +318,9 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertNotIn("this.updateRouteProgress(this.lastMarkerPoint)", renderer)
 
     def test_recenter_button_targets_the_active_map_mode(self):
-        app = (server.FRONTEND_DIR / "js" / "app.js").read_text(encoding="utf-8")
+        app = (server.FRONTEND_DIR / "src" / "app.ts").read_text(encoding="utf-8")
         navigation = (
-            server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
+            server.FRONTEND_DIR / "src" / "navigation-map-renderer.ts"
         ).read_text(encoding="utf-8")
 
         self.assertIn('getElementById("btn-recenter")', app)
@@ -308,7 +330,7 @@ class SrpVectorMapTests(unittest.TestCase):
 
     def test_navigation_car_uses_lower_third_tracking_position(self):
         renderer = (
-            server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
+            server.FRONTEND_DIR / "src" / "navigation-map-renderer.ts"
         ).read_text(encoding="utf-8")
 
         self.assertIn("getTrackingPadding()", renderer)
@@ -320,7 +342,7 @@ class SrpVectorMapTests(unittest.TestCase):
 
     def test_navigation_only_view_settings_are_persisted(self):
         renderer = (
-            server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
+            server.FRONTEND_DIR / "src" / "navigation-map-renderer.ts"
         ).read_text(encoding="utf-8")
 
         self.assertIn('localStorage.setItem("gps_3d_tilt"', renderer)
@@ -328,10 +350,10 @@ class SrpVectorMapTests(unittest.TestCase):
 
     def test_navigation_is_gated_to_srp_and_route_matching_is_local(self):
         renderer = (
-            server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
+            server.FRONTEND_DIR / "src" / "navigation-map-renderer.ts"
         ).read_text(encoding="utf-8")
         controller = (
-            server.FRONTEND_DIR / "js" / "navigation-controller.js"
+            server.FRONTEND_DIR / "src" / "navigation-controller.ts"
         ).read_text(encoding="utf-8")
 
         self.assertIn('this.trackSupported = this.trackInfo.isSRP', renderer)
@@ -343,7 +365,7 @@ class SrpVectorMapTests(unittest.TestCase):
 
     def test_navigation_auto_zoom_is_twenty_five_percent_closer(self):
         renderer = (
-            server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
+            server.FRONTEND_DIR / "src" / "navigation-map-renderer.ts"
         ).read_text(encoding="utf-8")
 
         self.assertIn("SRP_NAVIGATION_AUTO_ZOOM_SCALE = 1.25", renderer)
