@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "0.2.0-beta.14",
+    [string]$Version = "0.2.0-beta.15",
     [switch]$SkipTests
 )
 

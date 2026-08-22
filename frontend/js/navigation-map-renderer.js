@@ -828,6 +828,16 @@ class NavigationMapRenderer {
     }
   }
 
+  getTrackingPadding() {
+    const height = this.map?.getContainer()?.clientHeight || 0;
+    return {
+      top: Math.round(height / 3),
+      right: 0,
+      bottom: 0,
+      left: 0,
+    };
+  }
+
   recenter() {
     this.isFreeBrowsing = false;
     this.updateRecenterButton(false);
@@ -836,6 +846,7 @@ class NavigationMapRenderer {
         center: this.displayPoint,
         bearing: this.orientationMode === "headingUp" ? this.displayBearing : 0,
         pitch: this.tiltAngle,
+        padding: this.getTrackingPadding(),
       });
     }
   }
@@ -846,11 +857,6 @@ class NavigationMapRenderer {
     // apply immediately. Otherwise a previous pan/rotate gesture makes the
     // button appear to do nothing until the automatic recenter timeout.
     this.recenter();
-    if (this.map && this.displayBearing !== null) {
-      this.map.jumpTo({
-        bearing: this.orientationMode === "headingUp" ? this.displayBearing : 0,
-      });
-    }
     return this.orientationMode;
   }
 
@@ -1183,6 +1189,7 @@ class NavigationMapRenderer {
         bearing: this.orientationMode === "headingUp" ? this.displayBearing : 0,
         pitch: this.tiltAngle,
         zoom,
+        padding: this.getTrackingPadding(),
       });
     }
     const screenBearing = DirectedRoadMatcher.normalizeAngle(

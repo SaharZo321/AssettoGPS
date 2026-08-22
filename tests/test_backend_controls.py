@@ -307,6 +307,18 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertIn('center: this.displayPoint', navigation)
         self.assertIn('this.orientationMode === "headingUp" ? this.displayBearing : 0', navigation)
 
+    def test_navigation_car_uses_lower_third_tracking_position(self):
+        renderer = (
+            server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("getTrackingPadding()", renderer)
+        self.assertIn("top: Math.round(height / 3)", renderer)
+        self.assertGreaterEqual(
+            renderer.count("padding: this.getTrackingPadding()"),
+            2,
+        )
+
     def test_navigation_auto_zoom_is_twenty_five_percent_closer(self):
         renderer = (
             server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
