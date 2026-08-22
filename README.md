@@ -1,5 +1,7 @@
 # AssettoGPS
 
+[![CI](https://github.com/SaharZo321/AssettoGPS/actions/workflows/ci.yml/badge.svg)](https://github.com/SaharZo321/AssettoGPS/actions/workflows/ci.yml)
+
 AssettoGPS is a second-screen GPS, minimap, and telemetry app for Assetto Corsa.
 It is designed for phones, tablets, and secondary monitors, with additional
 navigation data for Shutoko Revival Project.

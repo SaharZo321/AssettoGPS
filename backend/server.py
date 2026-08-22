@@ -9,6 +9,7 @@ import sys
 import json
 import asyncio
 import ipaddress
+import mimetypes
 import socket
 import threading
 import time
@@ -29,6 +30,10 @@ if getattr(sys, "frozen", False):
 else:
     RUNTIME_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = RUNTIME_ROOT / "frontend"
+
+# Serve JavaScript consistently when the host MIME database lacks .mjs entries.
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/javascript", ".mjs")
 
 app = FastAPI(title="Assetto Corsa GPS Minimap Server")
 
