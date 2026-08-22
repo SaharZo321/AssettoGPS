@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import unittest
 import uuid
@@ -47,6 +48,15 @@ class SharedMemoryTests(unittest.TestCase):
 
 
 class ControlEndpointTests(unittest.TestCase):
+    def setUp(self):
+        self.original_environment = server.environment_state.copy()
+        self.original_environment_updated_at = server.environment_updated_at
+
+    def tearDown(self):
+        server.environment_state.clear()
+        server.environment_state.update(self.original_environment)
+        server.environment_updated_at = self.original_environment_updated_at
+
     def test_custom_port_argument(self):
         args = server.parse_args(["--host", "127.0.0.1", "--port", "9123", "--mock"])
         self.assertEqual(args.host, "127.0.0.1")
@@ -75,6 +85,37 @@ class ControlEndpointTests(unittest.TestCase):
     def test_wildcard_cors_is_not_enabled(self):
         middleware_names = {middleware.cls.__name__ for middleware in server.app.user_middleware}
         self.assertNotIn("CORSMiddleware", middleware_names)
+
+    def test_environment_accepts_csp_ambient_light_data(self):
+        payload = {
+            "headlights": True,
+            "isNight": False,
+            "isDark": True,
+            "ambient": 0.25,
+            "lightSuggestion": 0.4,
+            "ambientOcclusion": 0.25,
+        }
+
+        with mock.patch.object(server.time, "monotonic", return_value=100.0):
+            response = asyncio.run(
+                server.set_environment(payload, make_request("127.0.0.1", "1"))
+            )
+
+        self.assertTrue(response["environment"]["available"])
+        self.assertTrue(response["environment"]["isDark"])
+        self.assertEqual(response["environment"]["ambient"], 0.25)
+        self.assertEqual(response["environment"]["ambientOcclusion"], 0.25)
+
+    def test_csp_environment_data_expires(self):
+        server.environment_state["source"] = "csp"
+        server.environment_updated_at = 100.0
+
+        self.assertTrue(server.csp_environment_available(102.0))
+        self.assertFalse(
+            server.csp_environment_available(
+                100.0 + server.CSP_ENVIRONMENT_TIMEOUT_SECONDS + 0.01
+            )
+        )
 
 
 if __name__ == "__main__":

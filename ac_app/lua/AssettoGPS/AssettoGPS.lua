@@ -22,10 +22,43 @@ local auto_boot_done = false
 local manually_stopped = false
 local last_check = 0
 local last_lighting_check = 0
+local sensor_light_level = 1.0
+local sensor_is_dark = false
+local sensor_initialized = false
 local control_headers = {
   ["Content-Type"] = "application/json",
   ["X-AssettoGPS-Control"] = "1"
 }
+
+local function clamp01(value, fallback)
+  return math.max(0.0, math.min(1.0, tonumber(value) or fallback or 0.0))
+end
+
+local function readLightSensor(dt, car)
+  local sim = ac.getSim()
+  local light_suggestion = sim and clamp01(sim.lightSuggestion, 0.0) or 0.0
+  local ambient_occlusion = car and clamp01(car.ambientOcclusion, 1.0) or 1.0
+
+  -- Either global darkness or local cover can lower the sensor reading.
+  local target_light_level = math.min(1.0 - light_suggestion, ambient_occlusion)
+
+  if not sensor_initialized then
+    sensor_light_level = target_light_level
+    sensor_initialized = true
+  else
+    local smoothing = 1.0 - math.exp(-math.max(0.0, dt or 0.0) * 2.5)
+    sensor_light_level = sensor_light_level + (target_light_level - sensor_light_level) * smoothing
+  end
+
+  -- Hysteresis avoids flicker around twilight and tunnel entrances.
+  if sensor_is_dark then
+    if sensor_light_level > 0.58 then sensor_is_dark = false end
+  elseif sensor_light_level < 0.42 then
+    sensor_is_dark = true
+  end
+
+  return sensor_light_level, sensor_is_dark, light_suggestion, ambient_occlusion
+end
 
 local function applyPort()
   local value = tonumber(port_input)
@@ -184,30 +217,34 @@ function windowMain(dt)
   end
 
   ui.separator()
-  local car = ac.getCar(0)
-  local headlights = car and car.headlightsActive
-  ui.text("Headlights Sensor: ")
+  ui.text("Auto Theme Sensor: ")
   ui.sameLine()
-  if headlights then
-    ui.textColored("ON (Night Mode)", rgbm(0.38, 0.74, 0.97, 1.0))
+  if sensor_is_dark then
+    ui.textColored("DARK (Night Theme)", rgbm(0.38, 0.74, 0.97, 1.0))
   else
-    ui.textColored("OFF (Day Mode)", rgbm(0.95, 0.8, 0.2, 1.0))
+    ui.textColored("BRIGHT (Day Theme)", rgbm(0.95, 0.8, 0.2, 1.0))
   end
+  ui.textDisabled(string.format("CSP ambient light: %d%%", math.floor(sensor_light_level * 100 + 0.5)))
 end
 
 -- Periodic async update loop
 function script.update(dt)
   local now = os.clock()
+  local car = ac.getCar(0)
+  local light_level, is_dark, light_suggestion, ambient_occlusion = readLightSensor(dt, car)
 
-  -- Sync headlights every 0.1s via async web post
+  -- Sync the CSP ambient-light sensor every 0.1s via async web post.
   if now - last_lighting_check > 0.1 then
     last_lighting_check = now
-    local car = ac.getCar(0)
     if car and server_running then
       local headlights = car.headlightsActive
-      local body = string.format('{"headlights": %s, "isNight": %s, "source": "csp-lua"}',
+      local body = string.format('{"headlights": %s, "isNight": %s, "isDark": %s, "ambient": %.4f, "lightSuggestion": %.4f, "ambientOcclusion": %.4f, "source": "csp-lua"}',
           headlights and "true" or "false",
-          headlights and "true" or "false"
+          light_suggestion >= 0.5 and "true" or "false",
+          is_dark and "true" or "false",
+          light_level,
+          light_suggestion,
+          ambient_occlusion
         )
       web.post("http://127.0.0.1:" .. server_port .. "/api/environment",
         control_headers, body, function(err, response) end)

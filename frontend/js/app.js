@@ -57,6 +57,7 @@ class App {
 
         if (frame.environment) {
           this.renderer.updateEnvironment(frame.environment);
+          this.updateAutoThemeCspNotice(frame.environment.available === true);
         }
       } catch (e) {
         console.error("Frame parse error", e);
@@ -119,6 +120,7 @@ class App {
         if (data.mode) {
           this.updateSegmentedActive("control-mode", "data-mode", data.mode);
         }
+        this.updateAutoThemeCspNotice(data.cspConnected === true);
       }
     } catch (e) {
       const urlEl = document.getElementById("device-network-url");
@@ -126,6 +128,13 @@ class App {
         urlEl.innerText = window.location.origin;
       }
     }
+  }
+
+  updateAutoThemeCspNotice(cspLightAvailable) {
+    this.cspLightAvailable = cspLightAvailable;
+    const note = document.getElementById("auto-theme-csp-note");
+    if (!note) return;
+    note.hidden = cspLightAvailable;
   }
 
   updateSegmentedActive(containerId, attrName, activeValue) {
@@ -332,4 +341,3 @@ class App {
 window.addEventListener("DOMContentLoaded", () => {
   window.app = new App();
 });
-

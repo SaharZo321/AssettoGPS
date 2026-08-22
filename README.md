@@ -42,6 +42,12 @@ The default address is:
 
     http://<your-PC-address>:8080
 
+Auto theme uses CSP's live ambient-light and track-occlusion data, so it reacts
+to daylight, night, and genuinely dark covered areas without relying on the
+car's height or manual headlight switch. If the CSP feed is unavailable, the
+settings menu shows the requirement and the display falls back to the device's
+color preference.
+
 To use a different port, stop the server from the in-game app, enter a port
 from 1024 to 65535, press **Apply**, and start the server again. CSP saves the
 selected port for future Assetto Corsa sessions. The setting is disabled while
@@ -107,7 +113,7 @@ Build and test the drag-and-drop Content Manager ZIP on Windows:
 
     ./scripts/build_release.ps1
 
-The output is build/AssettoGPS-0.2.0-beta.2.zip. The build script is only for
+The output is build/AssettoGPS-0.2.0-beta.3.zip. The build script is only for
 project maintainers; players install the resulting ZIP directly through Content
 Manager.
 

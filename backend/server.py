@@ -57,14 +57,33 @@ server_state = {
     "lastFrame": None,
 }
 
-# Environmental lighting state (from CSP bridge, tunnels, or in-game app)
+# Environmental lighting state reported by the CSP in-game bridge.
 environment_state = {
     "headlights": False,
-    "sunAngle": 1.0,  # 1.0 = noon, 0.0 = sunset, -1.0 = midnight
     "isNight": False,
+    "isDark": False,
     "ambient": 1.0,
-    "source": "auto",  # "auto", "csp", "in-game", "manual"
+    "lightSuggestion": 0.0,
+    "ambientOcclusion": 1.0,
+    "source": "unavailable",
 }
+environment_updated_at = 0.0
+CSP_ENVIRONMENT_TIMEOUT_SECONDS = 3.0
+
+
+def csp_environment_available(now: Optional[float] = None) -> bool:
+    """Return whether fresh ambient-light data is arriving from the CSP app."""
+    current_time = time.monotonic() if now is None else now
+    return (
+        environment_state.get("source") == "csp"
+        and environment_updated_at > 0.0
+        and current_time - environment_updated_at <= CSP_ENVIRONMENT_TIMEOUT_SECONDS
+    )
+
+
+def get_environment_snapshot(now: Optional[float] = None) -> Dict[str, Any]:
+    """Build the public lighting payload, including CSP sensor availability."""
+    return {**environment_state, "available": csp_environment_available(now)}
 
 
 def is_ac_game_active() -> bool:
@@ -207,6 +226,7 @@ async def get_status():
         "currentConfig": server_state["currentConfig"],
         "connectedClients": len(active_connections),
         "localIp": get_local_ip(),
+        "cspConnected": csp_environment_available(),
     }
 
 
@@ -294,19 +314,25 @@ async def set_mode(payload: Dict[str, str]):
 
 @app.post("/api/environment")
 async def set_environment(payload: Dict[str, Any], request: Request):
-    """Receives in-game environmental lighting, headlights, and night status from CSP or companion mods"""
+    """Receive ambient-light data from the local CSP in-game bridge."""
+    global environment_updated_at
     require_local_control(request)
     if "headlights" in payload:
         environment_state["headlights"] = bool(payload["headlights"])
     if "isNight" in payload:
         environment_state["isNight"] = bool(payload["isNight"])
-    if "sunAngle" in payload:
+    if "isDark" in payload:
+        environment_state["isDark"] = bool(payload["isDark"])
+    for key in ("ambient", "lightSuggestion", "ambientOcclusion"):
+        if key not in payload:
+            continue
         try:
-            environment_state["sunAngle"] = float(payload["sunAngle"])
+            environment_state[key] = max(0.0, min(1.0, float(payload[key])))
         except (ValueError, TypeError):
             pass
     environment_state["source"] = "csp"
-    return {"status": "ok", "environment": environment_state}
+    environment_updated_at = time.monotonic()
+    return {"status": "ok", "environment": get_environment_snapshot()}
 
 
 @app.post("/api/shutdown")
@@ -320,7 +346,7 @@ async def shutdown_server(request: Request):
 @app.get("/api/environment")
 async def get_environment():
     """Returns current environmental lighting state"""
-    return environment_state
+    return get_environment_snapshot()
 
 
 @app.websocket("/ws/telemetry")
@@ -397,10 +423,7 @@ async def websocket_endpoint(websocket: WebSocket):
             frame["environment"] = {
                 "inTunnel": bool(nav_data.get("inTunnel", False)),
                 "tunnelName": nav_data.get("tunnelName", None),
-                "headlights": bool(environment_state.get("headlights", False)),
-                "isNight": bool(environment_state.get("isNight", False)),
-                "sunAngle": float(environment_state.get("sunAngle", 1.0)),
-                "source": str(environment_state.get("source", "auto")),
+                **get_environment_snapshot(),
             }
 
             server_state["lastFrame"] = frame

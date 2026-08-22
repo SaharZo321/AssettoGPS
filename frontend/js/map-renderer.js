@@ -47,7 +47,7 @@ class MapRenderer {
     this.is3D = this.tiltAngle > 10;
     this.manualRotation = 0; // Manual rotation angle in radians
 
-    // Theme Mode: "dark", "light", or "auto" (Hybrid Tunnel & Lighting)
+    // Theme Mode: "dark", "light", or "auto" (CSP ambient-light sensor)
     this.themeMode = localStorage.getItem("gps_theme_mode") || "auto";
     this.theme = "dark";
     this.lastEnvData = null;
@@ -361,20 +361,29 @@ class MapRenderer {
   evaluateAutoTheme(envData) {
     if (this.themeMode !== "auto") return;
 
-    // 1. If car is inside an underground tunnel -> Night (Dark) mode
-    if (envData && envData.inTunnel) {
-      this.applyTheme("dark");
-      return;
+    const hasCspLight =
+      envData &&
+      (envData.available === true ||
+        (envData.available === undefined && envData.source === "csp"));
+
+    if (hasCspLight) {
+      if (typeof envData.isDark === "boolean") {
+        this.applyTheme(envData.isDark ? "dark" : "light");
+        return;
+      }
+
+      // Compatibility with an older CSP bridge that only reports global night.
+      if (typeof envData.isNight === "boolean") {
+        this.applyTheme(envData.isNight ? "dark" : "light");
+        return;
+      }
     }
 
-    // 2. If headlights are turned ON or in-game night is active -> Night (Dark) mode
-    if (envData && (envData.headlights || envData.isNight)) {
-      this.applyTheme("dark");
-      return;
-    }
-
-    // 3. Open road in the sun / daylight -> Day (Light) mode
-    this.applyTheme("light");
+    // Without CSP light data, use the device preference as a stable fallback.
+    const prefersDark =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches;
+    this.applyTheme(prefersDark ? "dark" : "light");
   }
 
   updateEnvironment(envData) {

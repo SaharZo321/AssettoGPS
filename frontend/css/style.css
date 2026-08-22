@@ -486,6 +486,23 @@
   letter-spacing: 0.8px;
 }
 
+.setting-requirement {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 9px;
+  background: rgba(245, 158, 11, 0.1);
+  color: #fbbf24;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+[data-theme="light"] .setting-requirement {
+  border-color: rgba(180, 83, 9, 0.3);
+  background: rgba(245, 158, 11, 0.12);
+  color: #92400e;
+}
+
 /* Modern Segmented Control Pills */
 .segmented-control {
   display: flex;
@@ -1111,4 +1128,3 @@
     font-size: 0.82rem;
   }
 }
-
