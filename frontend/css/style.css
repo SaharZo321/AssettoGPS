@@ -41,7 +41,7 @@
   height: 100vh;
   display: flex;
   flex-direction: column;
-  perspective: 1800px;
+  perspective: max(1800px, 240vh);
   perspective-origin: 50% 65%;
   overflow: hidden;
   background: var(--bg-main);

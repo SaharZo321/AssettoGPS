@@ -43,7 +43,12 @@ class MapRenderer {
     this.dragStart = { x: 0, y: 0 };
     this.prevTouch2 = null;
     // 3D Perspective Tilt (Waze Style) & Dynamic Rotation
-    this.tiltAngle = localStorage.getItem("gps_3d_tilt") === "false" ? 0 : 49;
+    this.tiltedAngle = 60;
+    this.tiltGestureThreshold = 30;
+    this.tiltScaleCompensation = 1.5;
+    this.minPerspectiveDistance = 1800;
+    this.perspectiveHeightRatio = 2.4;
+    this.tiltAngle = localStorage.getItem("gps_3d_tilt") === "false" ? 0 : this.tiltedAngle;
     this.is3D = this.tiltAngle > 10;
     this.manualRotation = 0; // Manual rotation angle in radians
 
@@ -68,6 +73,14 @@ class MapRenderer {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.screenWidth = window.innerWidth;
     this.screenHeight = window.innerHeight;
+    this.perspectiveDistance = Math.max(
+      this.minPerspectiveDistance,
+      this.screenHeight * this.perspectiveHeightRatio
+    );
+    const container = document.getElementById("app-container");
+    if (container) {
+      container.style.perspective = `${this.perspectiveDistance}px`;
+    }
     this.width = this.screenWidth * 1.8;
     this.height = this.screenHeight * 1.8;
     this.canvas.width = this.width * dpr;
@@ -151,7 +164,7 @@ class MapRenderer {
       { passive: false }
     );
 
-    // 3. Multi-Touch Gestures: 1-finger Pan, 2-finger Pinch Zoom, Tilt & Twist Rotation
+    // 3. Multi-Touch Gestures: 1-finger Pan, 2-finger Pinch Zoom, Tilt Toggle & Twist Rotation
     canvas.addEventListener(
       "touchstart",
       (e) => {
@@ -163,12 +176,14 @@ class MapRenderer {
           this.isDragging = false;
           const t1 = e.touches[0];
           const t2 = e.touches[1];
+          const midY = (t1.clientY + t2.clientY) / 2;
           this.prevTouch2 = {
             dist: Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY),
             angle: Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX),
-            midY: (t1.clientY + t2.clientY) / 2,
-            t1y: t1.clientY,
-            t2y: t2.clientY,
+            startMidY: midY,
+            startT1Y: t1.clientY,
+            startT2Y: t2.clientY,
+            tiltToggled: false,
           };
           if (this.canvas) this.canvas.style.transition = "none";
         }
@@ -200,18 +215,21 @@ class MapRenderer {
           while (dAngle > Math.PI) dAngle -= 2 * Math.PI;
           while (dAngle < -Math.PI) dAngle += 2 * Math.PI;
 
-          const t1dy = t1.clientY - this.prevTouch2.t1y;
-          const t2dy = t2.clientY - this.prevTouch2.t2y;
+          const t1dy = t1.clientY - this.prevTouch2.startT1Y;
+          const t2dy = t2.clientY - this.prevTouch2.startT2Y;
 
           // A. Pinch Zoom
           if (Math.abs(dDist) > 1.2) {
             this.adjustZoom(dDist * 0.008);
           }
 
-          // B. Two-Finger Vertical Drag -> Tilt (Swipe UP = more 3D, Swipe DOWN = flat 2D)
-          if ((t1dy > 0 && t2dy > 0) || (t1dy < 0 && t2dy < 0)) {
-            const avgDy = (t1dy + t2dy) / 2;
-            this.setTiltAngle(this.tiltAngle - avgDy * 0.45, false);
+          // B. Two-Finger Vertical Swipe -> Toggle between the fixed 2D and 3D views once per gesture
+          const verticalTravel = currentMidY - this.prevTouch2.startMidY;
+          const fingersMovedTogether = (t1dy > 0 && t2dy > 0) || (t1dy < 0 && t2dy < 0);
+          let tiltToggled = this.prevTouch2.tiltToggled;
+          if (!tiltToggled && fingersMovedTogether && Math.abs(verticalTravel) >= this.tiltGestureThreshold) {
+            this.toggleTilt();
+            tiltToggled = true;
           }
 
           // C. Two-Finger Twist -> Free Rotation
@@ -222,9 +240,10 @@ class MapRenderer {
           this.prevTouch2 = {
             dist: currentDist,
             angle: currentAngle,
-            midY: currentMidY,
-            t1y: t1.clientY,
-            t2y: t2.clientY,
+            startMidY: this.prevTouch2.startMidY,
+            startT1Y: this.prevTouch2.startT1Y,
+            startT2Y: this.prevTouch2.startT2Y,
+            tiltToggled,
           };
         }
       },
@@ -254,7 +273,9 @@ class MapRenderer {
     const rad = (this.tiltAngle * Math.PI) / 180;
     // Dynamic compensation scale: expands the canvas as tilt increases so edges never clip
     const scaleX = 1.0 + Math.sin(rad) * 0.45;
-    const scaleY = 1.0 + (1.0 / Math.max(0.35, Math.cos(rad)) - 1.0) * 0.65;
+    const scaleY =
+      1.0 +
+      (1.0 / Math.max(0.35, Math.cos(rad)) - 1.0) * this.tiltScaleCompensation;
 
     if (this.canvas) {
       if (!animated) {
@@ -272,15 +293,15 @@ class MapRenderer {
 
     const btn = document.getElementById("btn-tilt");
     if (btn) {
-      btn.innerText = this.tiltAngle > 15 ? "3D" : "2D";
-      btn.classList.toggle("active", this.tiltAngle > 15);
+      btn.innerText = this.is3D ? "3D" : "2D";
+      btn.classList.toggle("active", this.is3D);
     }
   }
 
   toggleTilt() {
-    const target = this.tiltAngle > 15 ? 0 : 49;
+    const target = this.is3D ? 0 : this.tiltedAngle;
     this.setTiltAngle(target, true);
-    return target > 15;
+    return this.is3D;
   }
 
   applyScreenPan(screenDx, screenDy) {
@@ -471,7 +492,9 @@ class MapRenderer {
     // 3D Perspective Projection
     const rad = (this.tiltAngle * Math.PI) / 180;
     const scaleX = 1.0 + Math.sin(rad) * 0.45;
-    const scaleY = 1.0 + (1.0 / Math.max(0.35, Math.cos(rad)) - 1.0) * 0.65;
+    const scaleY =
+      1.0 +
+      (1.0 / Math.max(0.35, Math.cos(rad)) - 1.0) * this.tiltScaleCompensation;
 
     const dx = (xCanvas - origXCanvas) * scaleX;
     const dy = (yCanvas - origYCanvas) * scaleY;
@@ -479,7 +502,7 @@ class MapRenderer {
     const yRot = dy * Math.cos(rad);
     const zRot = dy * Math.sin(rad); // Correct sign: points ahead (dy < 0) have zRot < 0
 
-    const perspective = 1800;
+    const perspective = this.perspectiveDistance || this.minPerspectiveDistance;
     if (zRot >= perspective - 50) {
       return { x: 0, y: 0, scale: 0, visible: false };
     }
