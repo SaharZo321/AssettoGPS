@@ -16,8 +16,8 @@
 </head>
 <body>
   <div id="app-container">
-    <!-- Optional offline OSM Navigation Map (Simple SVG Map remains default) -->
-    <div id="navigation-map" aria-label="Offline OpenStreetMap navigation map"></div>
+    <!-- Optional game-native Navigation Map (Simple SVG Map remains default) -->
+    <div id="navigation-map" aria-label="Offline SRP game-lane navigation map"></div>
     <div id="road-direction-status" class="road-direction-status direction-unknown" role="status" hidden>
       <span class="direction-icon">.</span><span>Finding carriageway...</span>
     </div>
@@ -150,7 +150,7 @@
                   <path d="M13 9l4-4-4-4" />
                   <path d="M7 15l-4-4" />
                 </svg>
-                <span>Navigation Map</span>
+                <span>Game Navigation</span>
               </button>
             </div>
             <p id="map-mode-note" class="map-mode-note" role="status">
@@ -165,7 +165,7 @@
                 <button id="btn-start-route" type="button" disabled>Start</button>
                 <button id="btn-clear-route" type="button" hidden>Clear</button>
               </div>
-              <p id="navigation-route-note">Choose a calibrated SRP landmark for offline directed routing.</p>
+              <p id="navigation-route-note">Choose an SRP landmark; routes follow directed game traffic lanes.</p>
             </div>
           </div>
 
@@ -376,9 +376,9 @@
   <script src="/js/interpolation.js?v=43"></script>
   <script src="/js/map-renderer.js?v=43"></script>
   <script src="/vendor/maplibre-gl/maplibre-gl.js?v=5.24.0"></script>
-  <script src="/js/navigation-map-renderer.js?v=47"></script>
+  <script src="/js/navigation-map-renderer.js?v=51"></script>
   <script src="/js/map-mode-controller.js?v=44"></script>
   <script src="/js/navigation-ui.js?v=44"></script>
-  <script src="/js/app.js?v=45"></script>
+  <script src="/js/app.js?v=46"></script>
 </body>
 </html>

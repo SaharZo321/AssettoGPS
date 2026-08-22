@@ -39,7 +39,9 @@ app = FastAPI(title="Assetto Corsa GPS Minimap Server")
 ac_shm = AssettoCorsaSharedMemory()
 track_finder = ACTrackFinder()
 nav_engine = NavigationEngine()
-mock_gen = MockTelemetryGenerator()
+mock_gen = MockTelemetryGenerator(
+    FRONTEND_DIR / "assets" / "maps" / "srp-traffic-lanes.geojson"
+)
 
 CONTROL_HEADER_NAME = "x-assettogps-control"
 CONTROL_HEADER_VALUE = "1"

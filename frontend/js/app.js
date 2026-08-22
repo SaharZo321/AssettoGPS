@@ -161,7 +161,7 @@ class App {
       if (error) {
         note.innerText = `Navigation Map could not start (${error}). Simple Map was restored.`;
       } else if (mode === "navigation") {
-        note.innerText = "Offline OSM carriageways, direction detection, and directed route planning are active.";
+        note.innerText = "Native SRP lanes, elevation-aware direction detection, and directed routing are active.";
       } else {
         note.innerText = "Exact offline SVG map. Route guidance is unavailable in Simple Map mode.";
       }
@@ -206,7 +206,7 @@ class App {
         : `${Math.round(detail.distanceM)} m`;
       note.innerText = `Route to ${detail.destination} - ${distance}.`;
     } else {
-      note.innerText = "Choose a calibrated SRP landmark for offline directed routing.";
+      note.innerText = "Choose an SRP landmark for game-native directed routing.";
     }
   }
 
@@ -300,7 +300,7 @@ class App {
       }
     });
 
-    // Map Mode: exact SVG Simple Map or offline OSM Navigation Map.
+    // Map Mode: exact SVG Simple Map or game-native lane Navigation Map.
     this.updateMapModeUi({ mode: this.renderer.mapMode, capabilities: this.renderer.capabilities });
     window.addEventListener("gps-map-mode-changed", (event) => {
       this.updateMapModeUi(event.detail || {});

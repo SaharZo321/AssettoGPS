@@ -10,5 +10,6 @@ https://opendatacommons.org/licenses/odbl/1-0/
 OpenStreetMap copyright and attribution information:
 https://www.openstreetmap.org/copyright
 
-The application displays "OpenStreetMap contributors" attribution whenever
-Navigation Map is active. The Simple SVG map does not use this OSM extract.
+This attribution applies to the retained OSM experiment only. Game Navigation
+uses the separate game-native traffic-lane prototype, and the Simple SVG map
+does not use this OSM extract.

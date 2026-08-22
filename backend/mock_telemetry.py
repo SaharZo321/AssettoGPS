@@ -3,8 +3,11 @@ Realistic Assetto Corsa Mock Telemetry Simulator
 Generates smooth Catmull-Rom spline driving telemetry along a simulated Shutoko Revival Project route.
 """
 
-import time
+import bisect
+import json
 import math
+import time
+from pathlib import Path
 from typing import Dict, Any, List, Tuple
 
 
@@ -27,9 +30,19 @@ def catmull_rom_spline(p0: Tuple[float, float], p1: Tuple[float, float], p2: Tup
 class MockTelemetryGenerator:
     """Simulates realistic driving telemetry on Shutoko Revival Project"""
 
-    def __init__(self):
+    def __init__(self, lane_asset_path: Path | None = None):
         self.start_time = time.time()
         self.t = 0.0
+        self.native_route = self._load_native_route(lane_asset_path)
+        self.native_route_distances = [0.0]
+        for previous, current in zip(self.native_route, self.native_route[1:]):
+            self.native_route_distances.append(
+                self.native_route_distances[-1]
+                + math.hypot(current[0] - previous[0], current[2] - previous[2])
+            )
+        self.native_route_length = (
+            self.native_route_distances[-1] if self.native_route_distances else 0.0
+        )
 
         # Calibrated Tokyo Expressway highway loop waypoints (X, Z)
         self.waypoints = [
@@ -52,46 +65,109 @@ class MockTelemetryGenerator:
             (-5897.0, 14006.5), # Back to Daikoku PA
         ]
 
+    @staticmethod
+    def _load_native_route(lane_asset_path: Path | None) -> List[Tuple[float, float, float]]:
+        if not lane_asset_path or not lane_asset_path.is_file():
+            return []
+        data = json.loads(lane_asset_path.read_text(encoding='utf-8'))
+        coordinate_space = data['coordinateSpace']
+        origin_longitude, origin_latitude = coordinate_space['origin']
+        longitude_scale = coordinate_space['metersPerLongitudeDegree']
+        latitude_scale = coordinate_space['metersPerLatitudeDegree']
+        lanes = {feature['properties']['lane_id']: feature for feature in data['features']}
+        route = []
+        route_coordinates = data.get('mockRoute')
+        if not route_coordinates:
+            route_coordinates = [
+                coordinate
+                for lane_id in (34, 29, 177, 193, 209)
+                for coordinate in lanes[lane_id]['geometry']['coordinates']
+            ]
+        for longitude, latitude, elevation in route_coordinates:
+            point = (
+                (longitude - origin_longitude) * longitude_scale,
+                elevation,
+                (latitude - origin_latitude) * latitude_scale,
+            )
+            if not route or math.hypot(
+                point[0] - route[-1][0], point[2] - route[-1][2]
+            ) > 0.05:
+                route.append(point)
+        if len(route) < 2:
+            return []
+        if math.dist(route[-1], route[0]) > 0.05:
+            route.append(route[0])
+        return route
+
+    def _sample_native_route(self, progress: float) -> Tuple[float, float, float]:
+        target_distance = (progress % 1.0) * self.native_route_length
+        index = max(1, bisect.bisect_left(self.native_route_distances, target_distance))
+        index = min(index, len(self.native_route) - 1)
+        start_distance = self.native_route_distances[index - 1]
+        end_distance = self.native_route_distances[index]
+        amount = 0.0 if end_distance == start_distance else (
+            (target_distance - start_distance) / (end_distance - start_distance)
+        )
+        start = self.native_route[index - 1]
+        end = self.native_route[index]
+        return tuple(start[axis] + (end[axis] - start[axis]) * amount for axis in range(3))
+
     def get_frame(self) -> Dict[str, Any]:
         """Generates the next smooth telemetry packet"""
         self.t = time.time() - self.start_time
 
-        # Full loop takes 150 seconds
-        total_loop_time = 150.0
+        # Native lane cycle runs at an average 180 km/h. The legacy synthetic
+        # route remains available for direct unit construction without assets.
+        total_loop_time = (
+            self.native_route_length / 50.0 if self.native_route_length else 150.0
+        )
         progress = (self.t % total_loop_time) / total_loop_time
 
-        n = len(self.waypoints) - 1
-        scaled_t = progress * n
-        i = int(scaled_t)
-        t_seg = scaled_t - i
+        if self.native_route_length:
+            cur_x, cur_y, cur_z = self._sample_native_route(progress)
+            next_progress = progress + min(5.0 / self.native_route_length, 0.001)
+            next_x, _, next_z = self._sample_native_route(next_progress)
+        else:
+            n = len(self.waypoints) - 1
+            scaled_t = progress * n
+            i = int(scaled_t)
+            t_seg = scaled_t - i
 
-        # 4 control points for closed Catmull-Rom spline
-        p0 = self.waypoints[(i - 1) % n]
-        p1 = self.waypoints[i % n]
-        p2 = self.waypoints[(i + 1) % n]
-        p3 = self.waypoints[(i + 2) % n]
-
-        cur_x, cur_z = catmull_rom_spline(p0, p1, p2, p3, t_seg)
-        # Next tiny step to calculate exact tangent heading vector
-        next_x, next_z = catmull_rom_spline(p0, p1, p2, p3, min(t_seg + 0.01, 1.0))
+            # 4 control points for the legacy closed Catmull-Rom spline.
+            p0 = self.waypoints[(i - 1) % n]
+            p1 = self.waypoints[i % n]
+            p2 = self.waypoints[(i + 1) % n]
+            p3 = self.waypoints[(i + 2) % n]
+            cur_x, cur_z = catmull_rom_spline(p0, p1, p2, p3, t_seg)
+            next_x, next_z = catmull_rom_spline(
+                p0, p1, p2, p3, min(t_seg + 0.01, 1.0)
+            )
 
         dx = next_x - cur_x
         dz = next_z - cur_z
         heading_rad = math.atan2(dx, dz)
         heading_deg = math.degrees(heading_rad) % 360
 
-        # Realistic variable elevation (subterranean tunnels vs elevated viaducts)
-        if -4900 < cur_x < -3600 and -9900 < cur_z < -6000:
-            cur_y = -8.0  # Subterranean Yamate tunnel
-        elif 200 < cur_x < 2200 and -6500 < cur_z < -4500:
-            cur_y = -4.0  # C1 underground segment
-        else:
-            cur_y = 18.0 + 8.0 * math.sin(self.t * 0.1)  # Elevated open-air viaduct (10m to 26m)
+        if not self.native_route_length:
+            # Legacy synthetic elevation for direct tests without map assets.
+            if -4900 < cur_x < -3600 and -9900 < cur_z < -6000:
+                cur_y = -8.0
+            elif 200 < cur_x < 2200 and -6500 < cur_z < -4500:
+                cur_y = -4.0
+            else:
+                cur_y = 18.0 + 8.0 * math.sin(self.t * 0.1)
 
-        # Realistic variable speed (straights vs curves)
+        # Keep native test motion and reported velocity consistent at 180 km/h.
+        # The legacy spline retains variable speed for standalone UI demos.
         curvature = abs(math.sin(self.t * 0.3))
-        target_speed = 280.0 - curvature * 150.0
-        speed_kmh = max(80.0, min(315.0, target_speed + 10.0 * math.sin(self.t * 0.8)))
+        if self.native_route_length:
+            speed_kmh = 180.0
+        else:
+            target_speed = 280.0 - curvature * 150.0
+            speed_kmh = max(
+                80.0,
+                min(315.0, target_speed + 10.0 * math.sin(self.t * 0.8)),
+            )
 
         # Gear & RPM
         if speed_kmh < 90:
@@ -119,7 +195,7 @@ class MockTelemetryGenerator:
             "status": 2,  # Live
             "session": 2,  # Race
             "track": "shutoko_revival_project_beta",
-            "trackConfig": "ptb",
+            "trackConfig": "main_layout",
             "carModel": "ks_nissan_gtr_r34",
             "playerName": "Mid Night Club",
             # Dynamics

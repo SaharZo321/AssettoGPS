@@ -72,6 +72,24 @@ class MockTelemetryTests(unittest.TestCase):
         self.assertLess(angle_error(first["headingRad"], motion_heading), math.radians(2))
         self.assertLess(angle_error(first["headingRad"], velocity_heading), math.radians(0.1))
 
+    def test_native_mock_route_uses_bundled_game_lanes(self):
+        lane_asset = (
+            server.FRONTEND_DIR / "assets" / "maps" / "srp-traffic-lanes.geojson"
+        )
+        with mock.patch.object(mock_telemetry.time, "time", return_value=1_000.0):
+            generator = mock_telemetry.MockTelemetryGenerator(lane_asset)
+        with mock.patch.object(mock_telemetry.time, "time", return_value=1_020.0):
+            frame = generator.get_frame()
+
+        self.assertGreater(generator.native_route_length, 60_000)
+        self.assertEqual(frame["trackConfig"], "main_layout")
+        self.assertEqual(frame["speedKmh"], 180.0)
+        self.assertAlmostEqual(
+            math.hypot(frame["velocity"][0], frame["velocity"][2]), 50.0, places=1
+        )
+        self.assertEqual(len(frame["carPosition"]), 3)
+        self.assertTrue(all(math.isfinite(value) for value in frame["carPosition"]))
+
 
 class ControlEndpointTests(unittest.TestCase):
     def setUp(self):
@@ -176,49 +194,57 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertEqual(response.media_type, "image/svg+xml")
         self.assertEqual(Path(response.path), server.SRP_MAP_PATH)
 
-    def test_offline_navigation_map_preserves_directed_osm_ways(self):
-        roads_path = server.FRONTEND_DIR / "assets" / "maps" / "srp-osm-roads.geojson"
-        roads = json.loads(roads_path.read_text(encoding="utf-8"))
+    def test_offline_navigation_map_preserves_native_directed_lanes(self):
+        lanes_path = (
+            server.FRONTEND_DIR / "assets" / "maps" / "srp-traffic-lanes.geojson"
+        )
+        roads = json.loads(lanes_path.read_text(encoding="utf-8"))
 
         self.assertEqual(roads["type"], "FeatureCollection")
-        self.assertIn("OpenStreetMap contributors", roads["attribution"])
-        self.assertGreater(len(roads["features"]), 1_500)
-        directed = 0
+        self.assertEqual(roads["coordinateSpace"]["type"], "srp-local-mercator")
+        self.assertEqual(roads["statistics"]["laneCount"], 593)
+        self.assertGreater(roads["statistics"]["pointCount"], 17_000)
+        self.assertEqual(roads["statistics"]["sourcePointCount"], 17_280)
+        self.assertEqual(roads["statistics"]["linkedIntersectionCount"], 514)
+        self.assertGreater(roads["statistics"]["routeConnectionCount"], 900)
+        self.assertGreater(roads["statistics"]["mockRoutePointCount"], 2_000)
+        self.assertGreater(roads["statistics"]["mockRouteLengthM"], 80_000)
+        self.assertEqual(roads["mockRoute"][0], roads["mockRoute"][-1])
+        self.assertEqual(
+            len(roads["routeConnections"]),
+            roads["statistics"]["routeConnectionCount"],
+        )
+        self.assertGreaterEqual(len(roads["destinations"]), 12)
+        self.assertIn("Bardaff", roads["attribution"])
         for feature in roads["features"]:
             self.assertEqual(feature["geometry"]["type"], "LineString")
             self.assertGreaterEqual(len(feature["geometry"]["coordinates"]), 2)
-            if feature["properties"]["oneway"] in {"yes", "1", "-1"}:
-                directed += 1
-        self.assertGreater(directed / len(roads["features"]), 0.98)
+            self.assertEqual(feature["properties"]["oneway"], "yes")
+            self.assertIn("lane_id", feature["properties"])
+            self.assertEqual(len(feature["geometry"]["coordinates"][0]), 3)
 
-    def test_srp_navigation_calibration_has_local_controls(self):
-        calibration_path = (
-            server.FRONTEND_DIR / "assets" / "maps" / "srp-osm-calibration.json"
-        )
-        calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+    def test_game_navigation_does_not_load_osm_calibration(self):
+        renderer = (
+            server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
+        ).read_text(encoding="utf-8")
 
-        self.assertEqual(calibration["method"], "affine-with-softened-idw-correction")
-        self.assertEqual(calibration["smoothingRadius"], 500)
-        self.assertGreaterEqual(len(calibration["anchors"]), 12)
-        self.assertEqual(len(calibration["affine"]["longitude"]), 3)
-        self.assertEqual(len(calibration["affine"]["latitude"]), 3)
+        self.assertIn("class SrpGameProjection", renderer)
+        self.assertIn("srp-traffic-lanes.geojson", renderer)
+        self.assertNotIn("srp-osm-calibration.json", renderer)
+        self.assertNotIn("SrpCoordinateCalibration", renderer)
 
     def test_frontend_exposes_both_map_modes_and_local_maplibre(self):
         index = (server.FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
         controller = (server.FRONTEND_DIR / "js" / "map-mode-controller.js").read_text(
             encoding="utf-8"
         )
-        license_text = (
-            server.FRONTEND_DIR / "assets" / "maps" / "OSM-LICENSE.txt"
-        ).read_text(encoding="utf-8")
-
         self.assertIn('data-map-mode="simple"', index)
         self.assertIn('data-map-mode="navigation"', index)
+        self.assertIn("Game Navigation", index)
         self.assertIn('id="navigation-destination"', index)
         self.assertIn('id="btn-start-route"', index)
         self.assertIn('/vendor/maplibre-gl/maplibre-gl.js', index)
         self.assertIn('localStorage.getItem("gps_map_mode")', controller)
-        self.assertIn("OpenStreetMap contributors", license_text)
 
     def test_navigation_map_includes_directed_route_planning(self):
         renderer = (
@@ -226,6 +252,7 @@ class SrpVectorMapTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("class DirectedRoadGraph", renderer)
+        self.assertIn("connectIntersectionRoutes", renderer)
         self.assertIn("setDestination(destinationName)", renderer)
         self.assertIn('getSource("active-route")', renderer)
         self.assertIn("oneway", renderer)
@@ -235,6 +262,10 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertNotIn("const targetPoint = match?.point", renderer)
         self.assertIn("reliableMatch?.alignedBearing", renderer)
         self.assertIn("resolveTravelBearing", renderer)
+        self.assertIn("startMatch?.segmentTo", renderer)
+        self.assertIn("Waiting for a game-lane position.", renderer)
+        self.assertIn("const displayJump", renderer)
+        self.assertIn("this.matcher?.resetContinuity();", renderer)
         self.assertIn("this.recenter();", renderer)
 
 

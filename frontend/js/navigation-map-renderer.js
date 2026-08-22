@@ -1,59 +1,29 @@
 /**
  * Offline MapLibre renderer for SRP.
  *
- * MapLibre renders the OSM extract. Assetto Corsa coordinates are smoothly
- * calibrated while nearby OSM motorway ways provide direction matching. The
- * same local extract provides the one-way graph used for route planning.
+ * MapLibre renders SRP's own directed traffic lanes in game coordinates.
  */
 
-class SrpCoordinateCalibration {
+class SrpGameProjection {
   constructor(config) {
-    this.longitude = config.affine.longitude;
-    this.latitude = config.affine.latitude;
-    this.anchors = config.anchors || [];
-    this.smoothingRadius = Number(config.smoothingRadius) || 500;
-  }
-
-  affinePoint(x, z) {
-    return [
-      this.longitude[0] * x + this.longitude[1] * z + this.longitude[2],
-      this.latitude[0] * x + this.latitude[1] * z + this.latitude[2],
-    ];
+    this.origin = config.origin || [139.75, 35.6];
+    this.metersPerLongitudeDegree = Number(config.metersPerLongitudeDegree);
+    this.metersPerLatitudeDegree = Number(config.metersPerLatitudeDegree);
+    if (!this.metersPerLongitudeDegree || !this.metersPerLatitudeDegree) {
+      throw new Error('SRP lane projection metadata is invalid');
+    }
   }
 
   toLngLat(x, z) {
-    const base = this.affinePoint(x, z);
-    if (!this.anchors.length) return base;
-
-    let longitudeCorrection = 0;
-    let latitudeCorrection = 0;
-    let totalWeight = 0;
-    const smoothingSquared = this.smoothingRadius * this.smoothingRadius;
-    for (const anchor of this.anchors) {
-      const dx = x - anchor.ac[0];
-      const dz = z - anchor.ac[1];
-      const distanceSquared = dx * dx + dz * dz;
-      // A finite radius prevents the correction field from accelerating
-      // sharply near a control point. Singular inverse-distance weights made
-      // a smoothly moving car jump hundreds of metres between map frames.
-      const weight = 1 / (distanceSquared + smoothingSquared);
-      longitudeCorrection += anchor.residual[0] * weight;
-      latitudeCorrection += anchor.residual[1] * weight;
-      totalWeight += weight;
-    }
     return [
-      base[0] + longitudeCorrection / totalWeight,
-      base[1] + latitudeCorrection / totalWeight,
+      this.origin[0] + x / this.metersPerLongitudeDegree,
+      this.origin[1] + z / this.metersPerLatitudeDegree,
     ];
   }
 
   headingToBearing(x, z, headingRadians) {
-    // Local landmark correction is positional; differentiating it can rotate
-    // a heading sharply near an anchor. The global affine basis preserves the
-    // game's forward vector and guarantees that h + PI is the opposite road
-    // bearing.
-    const origin = this.affinePoint(x, z);
-    const ahead = this.affinePoint(
+    const origin = this.toLngLat(x, z);
+    const ahead = this.toLngLat(
       x + Math.sin(headingRadians) * 25,
       z + Math.cos(headingRadians) * 25
     );
@@ -70,6 +40,13 @@ class DirectedRoadMatcher {
     this.previousPoint = null;
     this.previousInputPoint = null;
     this.buildIndex(featureCollection);
+  }
+
+  resetContinuity() {
+    this.previousWayId = null;
+    this.previousSegmentKey = null;
+    this.previousPoint = null;
+    this.previousInputPoint = null;
   }
 
   static normalizeAngle(angle) {
@@ -103,12 +80,15 @@ class DirectedRoadMatcher {
       const originalCoordinates = feature.geometry?.coordinates || [];
       const oneway = String(feature.properties?.oneway || "").toLowerCase();
       const coordinates = oneway === "-1" ? [...originalCoordinates].reverse() : originalCoordinates;
+      const laneId = feature.properties?.lane_id ?? feature.properties?.osm_id;
       for (let index = 0; index < coordinates.length - 1; index += 1) {
         const segment = {
           from: coordinates[index],
           to: coordinates[index + 1],
-          wayId: feature.properties.osm_id,
-          key: `${feature.properties.osm_id}:${index}:${coordinates[index][0]}:${coordinates[index][1]}`,
+          fromElevation: Number(coordinates[index][2]) || 0,
+          toElevation: Number(coordinates[index + 1][2]) || 0,
+          wayId: laneId,
+          key: `${laneId}:${index}:${coordinates[index][0]}:${coordinates[index][1]}`,
           oneWay: ["yes", "1", "true", "-1"].includes(oneway),
           properties: feature.properties,
         };
@@ -147,6 +127,7 @@ class DirectedRoadMatcher {
         point[1] + north / latitudeScale,
       ],
       distance: Math.hypot(east, north),
+      elevation: segment.fromElevation + (segment.toElevation - segment.fromElevation) * amount,
       amount,
     };
   }
@@ -170,40 +151,43 @@ class DirectedRoadMatcher {
     return segments;
   }
 
-  match(point, vehicleBearing) {
+  match(point, vehicleBearing, vehicleElevation = null) {
     let best = null;
-    const inputMovement = this.previousInputPoint
-      ? DirectedRoadMatcher.distance(this.previousInputPoint, point)
-      : 0;
     for (const segment of this.candidates(point)) {
       const projection = this.project(point, segment);
       const roadBearing = DirectedRoadMatcher.bearing(segment.from, segment.to);
       const directionDifference = Math.abs(
         DirectedRoadMatcher.normalizeAngle(vehicleBearing - roadBearing)
       );
+      // Native SRP lane geometry is precise enough that proximity must remain
+      // the primary signal. Continuity is only a tie-breaker between adjacent
+      // segments; a large bonus can pin the match to a stale part of a long
+      // lane and make the vehicle appear to teleport.
       const continuityBonus = segment.key === this.previousSegmentKey
-        ? 75
-        : segment.wayId === this.previousWayId ? 40 : 0;
-      const projectedMovement = this.previousPoint
-        ? DirectedRoadMatcher.distance(this.previousPoint, projection.point)
-        : 0;
-      // A vehicle moving a few metres must not suddenly jump across an
-      // interchange to a different carriageway. Allow normal forward motion
-      // and connected-way transitions, but strongly discourage snap jumps.
-      const transitionAllowance = 18 + inputMovement * 4;
-      const transitionPenalty = Math.max(0, projectedMovement - transitionAllowance) * 1.4;
+        ? 3
+        : segment.wayId === this.previousWayId ? 1 : 0;
       // Distance selects the carriageway. Heading helps at overlaps, while a
       // reverse-driving car can still be matched and explicitly reported.
-      const headingPenalty = Math.min(directionDifference, 180 - directionDifference) * 0.35;
-      const score = projection.distance + headingPenalty + transitionPenalty - continuityBonus;
+      const headingPenalty = Math.min(directionDifference, 180 - directionDifference) * 0.08;
+      const elevationDifference = vehicleElevation === null
+        ? 0
+        : Math.abs(vehicleElevation - projection.elevation);
+      // X/Z can overlap in SRP tunnels and stacked junctions. Elevation keeps
+      // those carriageways separate without ever moving the visible marker.
+      const elevationPenalty = elevationDifference * 4;
+      const score = (projection.distance * 3) + headingPenalty
+        + elevationPenalty - continuityBonus;
       if (!best || score < best.score) {
         best = {
           ...projection,
           score,
           roadBearing,
           directionDifference,
+          elevationDifference,
           wayId: segment.wayId,
           segmentKey: segment.key,
+          segmentFrom: segment.from,
+          segmentTo: segment.to,
           oneWay: segment.oneWay,
           properties: segment.properties,
         };
@@ -226,11 +210,14 @@ class DirectedRoadMatcher {
 class DirectedRoadGraph {
   constructor(featureCollection) {
     this.nodes = new Map();
+    this.disallowedTransitions = new Set(
+      (featureCollection.disallowedTransitions || []).map((pair) => pair.join(':'))
+    );
     this.build(featureCollection);
   }
 
   key(point) {
-    return `${Number(point[0]).toFixed(7)},${Number(point[1]).toFixed(7)}`;
+    return `${Number(point[0]).toFixed(7)},${Number(point[1]).toFixed(7)},${Number(point[2] || 0).toFixed(2)}`;
   }
 
   distance(from, to) {
@@ -258,9 +245,20 @@ class DirectedRoadGraph {
   }
 
   build(featureCollection) {
+    const endpoints = [];
     for (const feature of featureCollection.features || []) {
       const original = feature.geometry?.coordinates || [];
       if (original.length < 2) continue;
+      const laneId = feature.properties?.lane_id;
+      endpoints.push({
+        laneId,
+        start: original[0],
+        end: original[original.length - 1],
+        startBearing: DirectedRoadMatcher.bearing(original[0], original[1]),
+        endBearing: DirectedRoadMatcher.bearing(
+          original[original.length - 2], original[original.length - 1]
+        ),
+      });
       const oneway = String(feature.properties?.oneway || "yes").toLowerCase();
       const coordinates = oneway === "-1" ? [...original].reverse() : original;
       for (let index = 0; index < coordinates.length - 1; index += 1) {
@@ -268,6 +266,52 @@ class DirectedRoadGraph {
         if (!["yes", "1", "true", "-1"].includes(oneway)) {
           this.addEdge(coordinates[index + 1], coordinates[index], feature.properties);
         }
+      }
+    }
+    if (Array.isArray(featureCollection.routeConnections)
+        && featureCollection.routeConnections.length) {
+      this.connectIntersectionRoutes(featureCollection.routeConnections);
+    } else {
+      this.connectLaneEndpoints(endpoints);
+    }
+  }
+
+  connectIntersectionRoutes(connections) {
+    for (const connection of connections) {
+      if (!Array.isArray(connection) || connection.length < 9) continue;
+      this.addEdge(
+        connection.slice(0, 3),
+        connection.slice(3, 6),
+        {
+          connector: true,
+          from_lane_id: connection[6],
+          to_lane_id: connection[7],
+          intersection_id: connection[8],
+        }
+      );
+    }
+  }
+
+  connectLaneEndpoints(endpoints) {
+    for (const exit of endpoints) {
+      for (const entrance of endpoints) {
+        if (exit.laneId === entrance.laneId) continue;
+        if (this.disallowedTransitions.has(`${exit.laneId}:${entrance.laneId}`)) continue;
+        const distance = this.distance(exit.end, entrance.start);
+        if (distance > 24) continue;
+        const elevationDifference = Math.abs(
+          (Number(exit.end[2]) || 0) - (Number(entrance.start[2]) || 0)
+        );
+        if (elevationDifference > 8) continue;
+        const turn = Math.abs(
+          DirectedRoadMatcher.normalizeAngle(entrance.startBearing - exit.endBearing)
+        );
+        if (turn > 145) continue;
+        this.addEdge(exit.end, entrance.start, {
+          connector: true,
+          from_lane_id: exit.laneId,
+          to_lane_id: entrance.laneId,
+        });
       }
     }
   }
@@ -283,6 +327,18 @@ class DirectedRoadGraph {
       }
     }
     return { key: nearestKey, distance: nearestDistance };
+  }
+
+  nearbyDestinationNodes(point, extraDistance = 75) {
+    const candidates = [];
+    let nearestDistance = Infinity;
+    for (const [key, node] of this.nodes) {
+      const distance = this.distance(point, node.point);
+      candidates.push({ key, distance });
+      nearestDistance = Math.min(nearestDistance, distance);
+    }
+    const threshold = Math.min(1500, nearestDistance + extraDistance);
+    return candidates.filter((candidate) => candidate.distance <= threshold);
   }
 
   pushHeap(heap, item) {
@@ -317,25 +373,46 @@ class DirectedRoadGraph {
     return root;
   }
 
-  route(startPoint, destinationPoint) {
-    const start = this.nearestNode(startPoint);
-    const destination = this.nearestNode(destinationPoint);
-    if (!start.key || !destination.key || start.distance > 1500 || destination.distance > 1500) {
+  route(startPoint, destinationPoint, startMatch = null) {
+    if (!startMatch?.segmentTo) return null;
+    const matchedStartKey = this.key(startMatch.segmentTo);
+    if (!this.nodes.has(matchedStartKey)) return null;
+    const start = {
+      key: matchedStartKey,
+      distance: this.distance(startPoint, startMatch.segmentTo),
+      routeOrigin: startPoint,
+    };
+    const destinations = this.nearbyDestinationNodes(destinationPoint);
+    if (!start.key || !destinations.length || start.distance > 1500) {
       return null;
     }
 
-    const destinationNode = this.nodes.get(destination.key);
-    const distances = new Map([[start.key, 0]]);
+    const destinationByKey = new Map(
+      destinations.map((destination) => [destination.key, destination])
+    );
+    const distances = new Map([[start.key, start.distance]]);
     const previous = new Map();
     const queue = [];
-    this.pushHeap(queue, [this.distance(this.nodes.get(start.key).point, destinationNode.point), start.key, 0]);
+    this.pushHeap(queue, [start.distance, start.key, start.distance]);
+    let destination = null;
+    let bestDestinationScore = Infinity;
 
     while (queue.length) {
       const current = this.popHeap(queue);
       const currentKey = current[1];
       const currentDistance = current[2];
       if (currentDistance !== distances.get(currentKey)) continue;
-      if (currentKey === destination.key) break;
+      if (currentDistance > bestDestinationScore) break;
+      if (destinationByKey.has(currentKey)) {
+        const candidateDestination = destinationByKey.get(currentKey);
+        // Prefer finishing close to the landmark, but allow a nearby
+        // reachable carriageway when the geometrically closest one is inbound.
+        const destinationScore = currentDistance + candidateDestination.distance * 3;
+        if (destinationScore < bestDestinationScore) {
+          destination = candidateDestination;
+          bestDestinationScore = destinationScore;
+        }
+      }
 
       const node = this.nodes.get(currentKey);
       for (const edge of node.edges) {
@@ -343,12 +420,11 @@ class DirectedRoadGraph {
         if (candidate >= (distances.get(edge.to) ?? Infinity)) continue;
         distances.set(edge.to, candidate);
         previous.set(edge.to, currentKey);
-        const heuristic = this.distance(this.nodes.get(edge.to).point, destinationNode.point);
-        this.pushHeap(queue, [candidate + heuristic, edge.to, candidate]);
+        this.pushHeap(queue, [candidate, edge.to, candidate]);
       }
     }
 
-    if (!distances.has(destination.key)) return null;
+    if (!destination || !distances.has(destination.key)) return null;
     const keys = [];
     let key = destination.key;
     while (key) {
@@ -359,6 +435,9 @@ class DirectedRoadGraph {
     if (keys[keys.length - 1] !== start.key) return null;
     keys.reverse();
     const coordinates = keys.map((nodeKey) => this.nodes.get(nodeKey).point);
+    if (start.routeOrigin && this.distance(start.routeOrigin, coordinates[0]) > 0.05) {
+      coordinates.unshift(start.routeOrigin);
+    }
     const remaining = new Array(coordinates.length).fill(0);
     for (let index = coordinates.length - 2; index >= 0; index -= 1) {
       remaining[index] = remaining[index + 1] + this.distance(coordinates[index], coordinates[index + 1]);
@@ -367,7 +446,8 @@ class DirectedRoadGraph {
       coordinates,
       remaining,
       distanceM: distances.get(destination.key),
-      startSnapDistanceM: start.distance,
+      startSnapDistanceM: Number(startMatch.distance) || 0,
+      startSegmentRemainingM: start.distance,
       destinationSnapDistanceM: destination.distance,
     };
   }
@@ -378,7 +458,7 @@ class NavigationMapRenderer {
     this.container = document.getElementById(containerId);
     this.map = null;
     this.marker = null;
-    this.calibration = null;
+    this.projection = null;
     this.matcher = null;
     this.graph = null;
     this.destinations = [];
@@ -393,7 +473,10 @@ class NavigationMapRenderer {
     this.courseReferencePoint = null;
     this.courseBearing = null;
     this.lastTravelBearing = null;
-    this.maxReliableMatchDistance = 180;
+    this.lastMatch = null;
+    this.lastReliableMatch = null;
+    this.maxReliableMatchDistance = 45;
+    this.maxReliableElevationDifference = 12;
     this.ready = false;
     this.active = false;
     this.trackInfo = null;
@@ -447,7 +530,7 @@ class NavigationMapRenderer {
           layout: { "line-cap": "round", "line-join": "round" },
           paint: {
             "line-color": light ? "#94a3b8" : "#020617",
-            "line-width": ["interpolate", ["linear"], ["zoom"], 9, 1.2, 13, 4.5, 17, 14],
+            "line-width": ["interpolate", ["linear"], ["zoom"], 9, 0.8, 13, 2.8, 17, 7],
           },
         },
         {
@@ -457,12 +540,14 @@ class NavigationMapRenderer {
           layout: { "line-cap": "round", "line-join": "round" },
           paint: {
             "line-color": [
-              "case",
-              ["==", ["get", "highway"], "motorway_link"],
-              light ? "#38bdf8" : "#0ea5e9",
-              light ? "#f8fafc" : "#cbd5e1",
+              "match",
+              ["get", "role"],
+              1, light ? "#64748b" : "#334155",
+              2, light ? "#0ea5e9" : "#38bdf8",
+              4, light ? "#f8fafc" : "#e2e8f0",
+              light ? "#e2e8f0" : "#94a3b8",
             ],
-            "line-width": ["interpolate", ["linear"], ["zoom"], 9, 0.8, 13, 3, 17, 10],
+            "line-width": ["interpolate", ["linear"], ["zoom"], 9, 0.5, 13, 1.7, 17, 4.5],
           },
         },
         {
@@ -514,29 +599,24 @@ class NavigationMapRenderer {
     if (!this.container) throw new Error("Navigation map container is missing");
     if (!window.maplibregl) throw new Error("MapLibre GL JS is unavailable");
 
-    const [roadsResponse, calibrationResponse] = await Promise.all([
-      fetch("/assets/maps/srp-osm-roads.geojson"),
-      fetch("/assets/maps/srp-osm-calibration.json"),
-    ]);
-    if (!roadsResponse.ok || !calibrationResponse.ok) {
-      throw new Error("Offline SRP navigation data could not be loaded");
+    const roadsResponse = await fetch('/assets/maps/srp-traffic-lanes.geojson');
+    if (!roadsResponse.ok) {
+      throw new Error('Offline SRP traffic lanes could not be loaded');
     }
-    const [roads, calibration] = await Promise.all([
-      roadsResponse.json(),
-      calibrationResponse.json(),
-    ]);
-    this.calibration = new SrpCoordinateCalibration(calibration);
+    const roads = await roadsResponse.json();
+    this.projection = new SrpGameProjection(roads.coordinateSpace || {});
     this.matcher = new DirectedRoadMatcher(roads);
     this.graph = new DirectedRoadGraph(roads);
-    this.destinations = (calibration.anchors || []).map((anchor) => ({
-      name: anchor.name,
-      point: [...anchor.osm],
+    this.destinations = (roads.destinations || []).map((destination) => ({
+      name: destination.name,
+      point: this.projection.toLngLat(destination.ac[0], destination.ac[1]),
     }));
+    const initialCenter = this.projection.toLngLat(0, 0);
 
     this.map = new window.maplibregl.Map({
       container: this.container,
       style: this.createStyle(roads),
-      center: [139.745, 35.62],
+      center: initialCenter,
       zoom: 12.5,
       bearing: 0,
       pitch: this.tiltAngle,
@@ -551,7 +631,7 @@ class NavigationMapRenderer {
     this.map.addControl(
       new window.maplibregl.AttributionControl({
         compact: true,
-        customAttribution: '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a>',
+        customAttribution: '<a href="https://www.overtake.gg/downloads/traffic-plan-shutoko-revival-project.57715/" target="_blank" rel="noopener">Prototype lanes: Bardaff</a>',
       })
     );
 
@@ -599,7 +679,7 @@ class NavigationMapRenderer {
       rotationAlignment: "viewport",
       pitchAlignment: "viewport",
     })
-      .setLngLat([139.745, 35.62])
+      .setLngLat(initialCenter)
       .addTo(this.map);
 
     const markBrowsing = (event) => {
@@ -619,7 +699,22 @@ class NavigationMapRenderer {
   }
 
   setActive(active) {
-    this.active = !!active;
+    const nextActive = !!active;
+    const activating = nextActive && !this.active;
+    this.active = nextActive;
+    if (activating) {
+      // The car may have moved a long way while Simple Map was active. Reset
+      // visual and matching continuity so the first Navigation frame starts
+      // at the live coordinate instead of sweeping across the map.
+      this.displayPoint = null;
+      this.displayBearing = null;
+      this.lastRenderTime = 0;
+      this.courseReferencePoint = null;
+      this.courseBearing = null;
+      this.lastMatch = null;
+      this.lastReliableMatch = null;
+      this.matcher?.resetContinuity();
+    }
     if (this.container) this.container.classList.toggle("active", this.active);
     if (this.statusElement) this.statusElement.hidden = !this.active;
     if (this.guidanceElement) this.guidanceElement.hidden = !this.active || !this.activeRoute;
@@ -640,10 +735,12 @@ class NavigationMapRenderer {
     this.map.setPaintProperty("background", "background-color", light ? "#e5e7eb" : "#080d16");
     this.map.setPaintProperty("road-casing", "line-color", light ? "#94a3b8" : "#020617");
     this.map.setPaintProperty("roads", "line-color", [
-      "case",
-      ["==", ["get", "highway"], "motorway_link"],
-      light ? "#38bdf8" : "#0ea5e9",
-      light ? "#f8fafc" : "#cbd5e1",
+      "match",
+      ["get", "role"],
+      1, light ? "#64748b" : "#334155",
+      2, light ? "#0ea5e9" : "#38bdf8",
+      4, light ? "#f8fafc" : "#e2e8f0",
+      light ? "#e2e8f0" : "#94a3b8",
     ]);
   }
 
@@ -682,10 +779,11 @@ class NavigationMapRenderer {
     }
 
     const movement = DirectedRoadMatcher.distance(this.courseReferencePoint, point);
-    if (movement > 500) {
+    if (movement > 300) {
       // Session restarts and teleports must not be interpreted as a heading.
       this.courseReferencePoint = [...point];
       this.courseBearing = telemetryBearing;
+      this.matcher?.resetContinuity();
     } else if (movement >= 0.8) {
       const measuredBearing = DirectedRoadMatcher.bearing(this.courseReferencePoint, point);
       const bearingDifference = DirectedRoadMatcher.normalizeAngle(
@@ -730,14 +828,15 @@ class NavigationMapRenderer {
     if (!this.statusElement) return;
     if (!match) {
       this.statusElement.className = "road-direction-status direction-unknown";
-      this.statusElement.innerHTML = '<span class="direction-icon">·</span><span>Finding carriageway…</span>';
+      this.statusElement.innerHTML = '<span class="direction-icon">&middot;</span><span>Finding game lane&hellip;</span>';
       return;
     }
-    const roadName = match.properties.ref || match.properties.name_en || match.properties.name || "Expressway";
+    const roleName = match.properties.role_name || 'Expressway';
+    const roadName = `${roleName} lane ${match.properties.lane_id ?? ''}`.trim();
     this.statusElement.className = `road-direction-status ${match.withFlow ? "direction-with-flow" : "direction-against-flow"}`;
     this.statusElement.innerHTML = match.withFlow
-      ? `<span class="direction-icon">→</span><span>${roadName} · with traffic</span>`
-      : `<span class="direction-icon">↶</span><span>${roadName} · opposite direction</span>`;
+      ? `<span class="direction-icon">&rarr;</span><span>${roadName} &middot; with traffic</span>`
+      : `<span class="direction-icon">&crarr;</span><span>${roadName} &middot; opposite direction</span>`;
   }
 
   getDestinations() {
@@ -762,7 +861,12 @@ class NavigationMapRenderer {
     if (!destination) return { error: "Choose a valid destination." };
     if (!this.graph || !this.lastMarkerPoint) return { error: "Waiting for a road position." };
 
-    const route = this.graph.route(this.lastMarkerPoint, destination.point);
+    if (!this.lastReliableMatch) return { error: "Waiting for a game-lane position." };
+    const route = this.graph.route(
+      this.lastReliableMatch.point,
+      destination.point,
+      this.lastReliableMatch
+    );
     if (!route) return { error: "No directed route is available from this carriageway." };
     this.destination = destination;
     this.activeRoute = route;
@@ -828,12 +932,12 @@ class NavigationMapRenderer {
   }
 
   render(interpolator) {
-    if (!this.active || !this.ready || !this.map || !this.calibration) return;
+    if (!this.active || !this.ready || !this.map || !this.projection) return;
     const position = interpolator.currentPos;
     if (!position || position.length < 3) return;
 
-    const longitudeLatitude = this.calibration.toLngLat(position[0], position[2]);
-    const telemetryBearing = this.calibration.headingToBearing(
+    const longitudeLatitude = this.projection.toLngLat(position[0], position[2]);
+    const telemetryBearing = this.projection.headingToBearing(
       position[0],
       position[2],
       interpolator.currentHeading
@@ -843,13 +947,16 @@ class NavigationMapRenderer {
       telemetryBearing
     );
     this.lastTravelBearing = travelBearing;
-    const match = this.matcher.match(longitudeLatitude, travelBearing);
-    const reliableMatch = match && match.distance <= this.maxReliableMatchDistance
+    const match = this.matcher.match(longitudeLatitude, travelBearing, position[1]);
+    const reliableMatch = match
+      && match.distance <= this.maxReliableMatchDistance
+      && match.elevationDifference <= this.maxReliableElevationDifference
       ? match
       : null;
-    // Position must remain a continuous function of AC coordinates. OSM road
-    // matching informs direction and routing, but never relocates the camera
-    // or marker to a different carriageway.
+    this.lastMatch = match;
+    this.lastReliableMatch = reliableMatch;
+    // Matching informs direction and routing, but never relocates the camera
+    // or marker. Both already occupy the exact same game coordinate space.
     const targetPoint = longitudeLatitude;
     const targetBearing = reliableMatch?.alignedBearing ?? travelBearing;
     const now = performance.now();
@@ -857,7 +964,9 @@ class NavigationMapRenderer {
       ? Math.min((now - this.lastRenderTime) / 1000, 0.1)
       : 1 / 60;
     this.lastRenderTime = now;
-    if (!this.displayPoint || this.displayBearing === null) {
+    const displayJump = this.displayPoint
+      && DirectedRoadMatcher.distance(this.displayPoint, targetPoint) > 300;
+    if (!this.displayPoint || this.displayBearing === null || displayJump) {
       this.displayPoint = [...targetPoint];
       this.displayBearing = targetBearing;
     } else {
@@ -896,7 +1005,7 @@ class NavigationMapRenderer {
   }
 }
 
-window.SrpCoordinateCalibration = SrpCoordinateCalibration;
+window.SrpGameProjection = SrpGameProjection;
 window.DirectedRoadMatcher = DirectedRoadMatcher;
 window.DirectedRoadGraph = DirectedRoadGraph;
 window.NavigationMapRenderer = NavigationMapRenderer;

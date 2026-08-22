@@ -2,13 +2,13 @@
 
 - `srp.svg` is the exact, lightweight Simple Map. It is the default and has no
   turn-by-turn navigation capability.
-- `srp-osm-roads.geojson` is a clipped offline OpenStreetMap motorway extract
-  for the optional MapLibre Navigation Map. Ordered OSM ways preserve one-way
-  carriageway direction for matching and future routing.
-- `srp-osm-calibration.json` maps Assetto Corsa X/Z coordinates into the local
-  OSM display. SRP is not a geographically exact copy of Tokyo, so the map
-  matcher treats this as a locally corrected estimate and safely falls back to
-  the Simple Map if WebGL or the offline assets are unavailable.
+- `srp-traffic-lanes.geojson` is the prototype MapLibre Navigation Map. Its 593
+  directed lanes retain Assetto Corsa elevation and use a linear private map
+  projection. Telemetry uses that same projection, so there is no OSM warp,
+  calibration, or marker snapping. CSP Traffic Planner intersection polygons
+  are converted into directed lane transitions for local landmark routing.
+- `srp-osm-roads.geojson` and `srp-osm-calibration.json` are retained as the
+  earlier geographic experiment. They are not loaded by Game Navigation.
 
 Regenerate the OSM assets with:
 
@@ -17,3 +17,16 @@ uv run python scripts/build_srp_osm_data.py build/osm-srp-motorways.json
 ```
 
 The source response is obtained using `scripts/srp_motorways.overpassql`.
+
+Regenerate the private traffic-lane prototype from a locally obtained CSP
+Traffic Planner file with:
+
+```powershell
+uv run python scripts/build_srp_traffic_data.py path\to\traffic.json frontend\assets\maps\srp-traffic-lanes.geojson
+```
+
+The current prototype was generated from Bardaff's SRP Traffic Plan 1.02. The
+author permits personal modification on the resource page, but public
+redistribution permission has not been established. Keep this prototype build
+private until that permission is confirmed or the geometry is replaced by an
+independently authored lane graph.

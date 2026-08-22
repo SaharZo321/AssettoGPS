@@ -89,11 +89,11 @@ class NavigationUI {
       if (this.mapMode !== "navigation") {
         subtitle = "Simple map - navigation unavailable";
       } else if (this.mapCapabilities.activeRoute) {
-        subtitle = "Offline directed route active";
+        subtitle = "Game-lane route active";
       } else if (this.mapCapabilities.routing) {
-        subtitle = "Direction-aware map - choose a destination";
+        subtitle = "Game-aligned lanes - choose a destination";
       } else {
-        subtitle = "Direction-aware map - routing unavailable";
+        subtitle = "Game-aligned lanes - routing unavailable";
       }
     }
 
