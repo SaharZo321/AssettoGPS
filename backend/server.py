@@ -13,7 +13,7 @@ import socket
 import threading
 import time
 from pathlib import Path
-from typing import Set, Dict, Any, Optional
+from typing import Set, Dict, Any, Optional, Callable
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -22,7 +22,6 @@ from fastapi.staticfiles import StaticFiles
 from ac_shared_memory import AssettoCorsaSharedMemory, ac_shared_memory_available
 from ac_track_finder import ACTrackFinder
 from navigation import NavigationEngine
-from mock_telemetry import MockTelemetryGenerator
 
 # PyInstaller extracts bundled data into sys._MEIPASS. Source runs use the repo root.
 if getattr(sys, "frozen", False):
@@ -37,9 +36,9 @@ app = FastAPI(title="Assetto Corsa GPS Minimap Server")
 ac_shm = AssettoCorsaSharedMemory()
 track_finder = ACTrackFinder()
 nav_engine = NavigationEngine()
-mock_gen = MockTelemetryGenerator(
-    FRONTEND_DIR / "assets" / "maps" / "srp-traffic-lanes.geojson"
-)
+telemetry_reader: Callable[[], Optional[Dict[str, Any]]] = ac_shm.read
+telemetry_reset: Optional[Callable[[], None]] = None
+ac_watchdog_enabled = True
 
 CONTROL_HEADER_NAME = "x-assettogps-control"
 CONTROL_HEADER_VALUE = "1"
@@ -51,7 +50,6 @@ active_connections: Set[WebSocket] = set()
 
 # Server state
 server_state = {
-    "mode": "auto",  # "auto", "live", "mock"
     "currentTrack": "shutoko_revival_project_beta",
     "currentConfig": "ptb",
     "isGameRunning": False,
@@ -130,7 +128,8 @@ def ac_watchdog_loop():
 async def on_startup():
     """Start the AC process watchdog when the server is ready."""
     shutdown_event.clear()
-    threading.Thread(target=ac_watchdog_loop, daemon=True).start()
+    if ac_watchdog_enabled:
+        threading.Thread(target=ac_watchdog_loop, daemon=True).start()
 
 
 def is_loopback_host(host: Optional[str]) -> bool:
@@ -191,8 +190,17 @@ def print_startup_banner(port: int = 8080):
     print("  Telemetry engine running... Ready for connections!\n")
 
 
+def reset_session_state():
+    """Reset trip/navigation state and the configured telemetry source, if any."""
+    if telemetry_reset is not None:
+        telemetry_reset()
+    nav_engine.trip_distance_m = 0.0
+    nav_engine.top_speed_kmh = 0.0
+    nav_engine.last_pos = None
+
+
 def start_keyboard_listener():
-    """Listens for Ctrl+R or 'r' in the terminal to reset the server/telemetry"""
+    """Listen for Ctrl+R or R in the terminal to reset session statistics."""
     if sys.platform != "win32":
         return
 
@@ -204,11 +212,8 @@ def start_keyboard_listener():
                 if msvcrt.kbhit():
                     ch = msvcrt.getch()
                     if ch in (b"\x12", b"r", b"R"):
-                        print("\n🔄 [RESET] Resetting telemetry simulator and trip statistics...")
-                        mock_gen.start_time = time.time()
-                        nav_engine.trip_distance_m = 0.0
-                        nav_engine.top_speed_kmh = 0.0
-                        nav_engine.last_pos = None
+                        print("\n🔄 [RESET] Resetting trip and navigation statistics...")
+                        reset_session_state()
                 time.sleep(0.08)
             except Exception:
                 break
@@ -221,7 +226,6 @@ def start_keyboard_listener():
 async def get_status():
     """Returns server and game connection status"""
     return {
-        "mode": server_state["mode"],
         "isGameRunning": server_state["isGameRunning"],
         "currentTrack": server_state["currentTrack"],
         "currentConfig": server_state["currentConfig"],
@@ -233,11 +237,8 @@ async def get_status():
 
 @app.post("/api/reset")
 async def reset_session():
-    """Resets simulator, trip stats, and navigation state"""
-    mock_gen.start_time = time.time()
-    nav_engine.trip_distance_m = 0.0
-    nav_engine.top_speed_kmh = 0.0
-    nav_engine.last_pos = None
+    """Reset trip statistics and navigation state."""
+    reset_session_state()
     return {"status": "ok", "message": "Session reset"}
 
 
@@ -248,15 +249,6 @@ async def get_track_data():
     config = server_state["currentConfig"]
     track_info = track_finder.get_track_info(track_name, config)
     return track_info
-
-
-@app.post("/api/mode")
-async def set_mode(payload: Dict[str, str]):
-    """Switches between auto, live, and mock modes"""
-    mode = payload.get("mode", "auto")
-    if mode in ["auto", "live", "mock"]:
-        server_state["mode"] = mode
-    return {"status": "ok", "mode": server_state["mode"]}
 
 
 @app.post("/api/environment")
@@ -302,43 +294,26 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_connections.add(websocket)
 
-    async def receive_loop():
-        """Background task to listen for client commands without blocking sending"""
-        try:
-            while True:
-                msg = await websocket.receive_text()
-                try:
-                    data = json.loads(msg)
-                    if "setMode" in data:
-                        server_state["mode"] = data["setMode"]
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-    receive_task = asyncio.create_task(receive_loop())
-
     try:
         while True:
-            mode = server_state["mode"]
-            live_data = None
-            if mode in ["auto", "live"]:
-                try:
-                    live_data = ac_shm.read()
-                except Exception:
-                    live_data = None
+            try:
+                telemetry_data = telemetry_reader()
+            except Exception:
+                telemetry_data = None
 
-            if live_data and live_data.get("connected") and live_data.get("status", 0) > 0:
-                server_state["isGameRunning"] = True
-                server_state["currentTrack"] = live_data.get("track", "")
-                server_state["currentConfig"] = live_data.get("trackConfig", "")
-                frame = live_data
-            elif mode in ["mock", "auto"]:
-                server_state["isGameRunning"] = False
-                frame = mock_gen.get_frame()
-                server_state["currentTrack"] = frame.get("track", "shutoko_revival_project_beta")
-                server_state["currentConfig"] = frame.get("trackConfig", "ptb")
+            if (
+                telemetry_data
+                and telemetry_data.get("connected")
+                and telemetry_data.get("status", 0) > 0
+            ):
+                frame = telemetry_data
+                server_state["isGameRunning"] = bool(
+                    frame.get("isGameRunning", True)
+                )
+                server_state["currentTrack"] = frame.get("track", "")
+                server_state["currentConfig"] = frame.get("trackConfig", "")
             else:
+                server_state["isGameRunning"] = False
                 frame = {"connected": False, "isGameRunning": False}
 
             # Enrich with Navigation & POIs
@@ -383,7 +358,6 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         print(f"WebSocket send error: {e}")
     finally:
-        receive_task.cancel()
         if websocket in active_connections:
             active_connections.remove(websocket)
 
@@ -397,11 +371,6 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="AssettoGPS local telemetry server")
     parser.add_argument("--host", default=os.environ.get("HOST", "0.0.0.0"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8080")))
-    parser.add_argument(
-        "--mock",
-        action="store_true",
-        help="Use generated telemetry without requiring Assetto Corsa",
-    )
     return parser.parse_args(argv)
 
 
@@ -409,8 +378,6 @@ def main(argv=None):
     global uvicorn_server
 
     args = parse_args(argv)
-    if args.mock:
-        server_state["mode"] = "mock"
     print_startup_banner(args.port)
     shutdown_event.clear()
     config = uvicorn.Config(

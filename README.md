@@ -97,13 +97,13 @@ Relevant upstream documentation:
 - Native SRP traffic-lane direction detection and directed landmark routing
 - SRP points of interest, junction guidance, and speed-camera warnings
 - Day/night display behavior and headlight synchronization
-- Mock telemetry mode for development without launching Assetto Corsa
+- Separate generated-telemetry development server for work without Assetto Corsa
 
 ## Development
 
 Install [uv](https://docs.astral.sh/uv/) and run:
 
-    uv run backend/server.py --mock
+    uv run backend/dev_server.py
 
 Then open http://127.0.0.1:8080.
 
@@ -127,7 +127,8 @@ The release build performs:
 - backend unit tests;
 - SRP connector, connectivity, destination-reachability, and golden-route checks;
 - a PyInstaller standalone Windows build;
-- a real packaged-server startup in mock mode;
+- a real packaged-server startup in live-only mode without requiring AC;
+- checks that generated telemetry, its CLI flag, API, and UI are absent;
 - HTTP status and protected-control checks;
 - graceful HTTP shutdown; and
 - ZIP staging in the Content Manager directory layout.

@@ -135,9 +135,6 @@ class App {
           const ip = data.localIp || window.location.hostname;
           urlEl.innerText = `http://${ip}${port}`;
         }
-        if (data.mode) {
-          this.updateSegmentedActive("control-mode", "data-mode", data.mode);
-        }
         this.updateAutoThemeCspNotice(data.cspConnected === true);
       }
     } catch (e) {
@@ -395,21 +392,7 @@ class App {
       });
     }
 
-    // 5. Telemetry Mode Segmented Control (Auto / Live / Mock)
-    const modeButtons = document.querySelectorAll("#control-mode .segmented-btn");
-    modeButtons.forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const selectedMode = btn.getAttribute("data-mode");
-        this.updateSegmentedActive("control-mode", "data-mode", selectedMode);
-        fetch("/api/mode", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: selectedMode }),
-        }).catch(() => {});
-      });
-    });
-
-    // 6. Reset Session Action Button
+    // 5. Reset Session Action Button
     const btnReset = document.getElementById("btn-reset-session");
     if (btnReset) {
       btnReset.addEventListener("click", async () => {
@@ -417,7 +400,7 @@ class App {
           btnReset.style.opacity = "0.6";
           const res = await fetch("/api/reset", { method: "POST" });
           if (res.ok) {
-            this.showToast("Trip stats & simulator reset!");
+            this.showToast("Trip and navigation stats reset!");
           }
         } catch (e) {
           console.warn("Reset error", e);
@@ -427,7 +410,7 @@ class App {
       });
     }
 
-    // 7. Copy Pairing URL Button
+    // 6. Copy Pairing URL Button
     const btnCopyUrl = document.getElementById("btn-copy-url");
     if (btnCopyUrl) {
       btnCopyUrl.addEventListener("click", async () => {

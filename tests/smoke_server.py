@@ -45,6 +45,22 @@ async def receive_telemetry_frame(port: int):
         return json.loads(payload)
 
 
+def assert_mock_flag_rejected(server_command):
+    try:
+        result = subprocess.run(
+            [*server_command, "--mock"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=5.0,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("Public server accepted --mock and kept running") from error
+    if result.returncode == 0:
+        raise RuntimeError("Public server accepted the removed --mock flag")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -53,6 +69,7 @@ def main() -> int:
         help="Executable command, for example AssettoGPS.Server.exe or wine AssettoGPS.Server.exe",
     )
     args = parser.parse_args()
+    assert_mock_flag_rejected(args.server_command)
 
     port = unused_port()
     command = [
@@ -61,7 +78,6 @@ def main() -> int:
         "127.0.0.1",
         "--port",
         str(port),
-        "--mock",
     ]
     process = subprocess.Popen(
         command,
@@ -76,17 +92,32 @@ def main() -> int:
 
     try:
         status_code, status = wait_until_ready(base_url)
-        if status_code != 200 or status.get("mode") != "mock":
+        if status_code != 200 or "mode" in status:
             raise RuntimeError(f"Unexpected status response: {status_code} {status}")
 
         with urllib.request.urlopen(f"{base_url}/", timeout=2.0) as response:
             frontend = response.read().decode("utf-8")
         if response.status != 200 or "<html" not in frontend.lower():
             raise RuntimeError("Bundled frontend was not served")
+        if "mock" in frontend.lower() or "/api/mode" in frontend:
+            raise RuntimeError("Public frontend still exposes generated telemetry")
 
         frame = asyncio.run(receive_telemetry_frame(port))
-        if not frame.get("connected") or "carPosition" not in frame:
+        if "connected" not in frame or frame.get("isMock"):
             raise RuntimeError(f"Unexpected WebSocket telemetry frame: {frame}")
+
+        try:
+            request_json(
+                f"{base_url}/api/mode",
+                method="POST",
+                headers={"Content-Type": "application/json"},
+                payload={"mode": "mock"},
+            )
+        except urllib.error.HTTPError as error:
+            if error.code not in (404, 405):
+                raise
+        else:
+            raise RuntimeError("Removed telemetry-mode API is still available")
 
         try:
             request_json(

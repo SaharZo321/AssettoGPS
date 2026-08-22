@@ -1,4 +1,6 @@
 import asyncio
+import contextlib
+import io
 import json
 import math
 import sys
@@ -72,12 +74,12 @@ class MockTelemetryTests(unittest.TestCase):
         self.assertLess(angle_error(first["headingRad"], velocity_heading), math.radians(0.1))
 
     def test_native_mock_route_uses_bundled_game_lanes(self):
-        lane_asset = (
-            server.FRONTEND_DIR / "assets" / "maps" / "srp-traffic-lanes.geojson"
+        route_asset = (
+            BACKEND_DIR / "dev_assets" / "srp-development-route.json"
         )
-        lane_data = json.loads(lane_asset.read_text(encoding="utf-8"))
+        route_data = json.loads(route_asset.read_text(encoding="utf-8"))
         with mock.patch.object(mock_telemetry.time, "time", return_value=1_000.0):
-            generator = mock_telemetry.MockTelemetryGenerator(lane_asset)
+            generator = mock_telemetry.MockTelemetryGenerator(route_asset)
         with mock.patch.object(mock_telemetry.time, "time", return_value=1_020.0):
             frame = generator.get_frame()
 
@@ -89,8 +91,8 @@ class MockTelemetryTests(unittest.TestCase):
         )
         self.assertEqual(len(frame["carPosition"]), 3)
         self.assertTrue(all(math.isfinite(value) for value in frame["carPosition"]))
-        longitude, latitude, _ = lane_data["mockRoute"][0]
-        coordinate_space = lane_data["coordinateSpace"]
+        longitude, latitude, _ = route_data["route"][0]
+        coordinate_space = route_data["coordinateSpace"]
         origin_longitude, origin_latitude = coordinate_space["origin"]
         self.assertAlmostEqual(
             generator.native_route[0][0],
@@ -115,10 +117,22 @@ class ControlEndpointTests(unittest.TestCase):
         server.environment_updated_at = self.original_environment_updated_at
 
     def test_custom_port_argument(self):
-        args = server.parse_args(["--host", "127.0.0.1", "--port", "9123", "--mock"])
+        args = server.parse_args(["--host", "127.0.0.1", "--port", "9123"])
         self.assertEqual(args.host, "127.0.0.1")
         self.assertEqual(args.port, 9123)
-        self.assertTrue(args.mock)
+
+    def test_public_server_rejects_mock_argument(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                server.parse_args(["--mock"])
+
+    def test_public_server_has_no_mode_api_or_status(self):
+        self.assertFalse(any(route.path == "/api/mode" for route in server.app.routes))
+        with mock.patch.object(server, "get_local_ip", return_value="127.0.0.1"):
+            status = asyncio.run(server.get_status())
+        self.assertNotIn("mode", status)
+        source = Path(server.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("mock_telemetry", source)
 
     def test_loopback_detection(self):
         self.assertTrue(server.is_loopback_host("127.0.0.1"))
@@ -204,9 +218,9 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertEqual(roads["statistics"]["sourcePointCount"], 17_280)
         self.assertEqual(roads["statistics"]["linkedIntersectionCount"], 514)
         self.assertGreater(roads["statistics"]["routeConnectionCount"], 900)
-        self.assertGreater(roads["statistics"]["mockRoutePointCount"], 2_000)
-        self.assertGreater(roads["statistics"]["mockRouteLengthM"], 80_000)
-        self.assertEqual(roads["mockRoute"][0], roads["mockRoute"][-1])
+        self.assertNotIn("mockRoute", roads)
+        self.assertNotIn("mockRoutePointCount", roads["statistics"])
+        self.assertNotIn("mockRouteLengthM", roads["statistics"])
         self.assertEqual(
             len(roads["routeConnections"]),
             roads["statistics"]["routeConnectionCount"],
@@ -220,7 +234,7 @@ class SrpVectorMapTests(unittest.TestCase):
             self.assertIn("lane_id", feature["properties"])
             self.assertEqual(len(feature["geometry"]["coordinates"][0]), 3)
 
-    def test_game_navigation_does_not_load_osm_calibration(self):
+    def test_game_navigation_uses_private_game_projection(self):
         renderer = (
             server.FRONTEND_DIR / "js" / "navigation-map-renderer.js"
         ).read_text(encoding="utf-8")
@@ -230,8 +244,6 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertIn(
             "this.origin[1] - z / this.metersPerLatitudeDegree", renderer
         )
-        self.assertNotIn("srp-osm-calibration.json", renderer)
-        self.assertNotIn("SrpCoordinateCalibration", renderer)
 
     def test_frontend_is_navigation_only_and_uses_local_maplibre(self):
         index = (server.FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
@@ -246,6 +258,12 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertNotIn('id="map-canvas"', index)
         self.assertNotIn('/js/map-renderer.js', index)
         self.assertNotIn('/js/map-mode-controller.js', index)
+        self.assertNotIn("Mock Sim", index)
+        self.assertNotIn("data-mode", index)
+        self.assertNotIn(
+            "/api/mode",
+            (server.FRONTEND_DIR / "js" / "app.js").read_text(encoding="utf-8"),
+        )
         self.assertFalse((server.FRONTEND_DIR / "js" / "map-renderer.js").exists())
         self.assertFalse((server.FRONTEND_DIR / "assets" / "maps" / "srp.svg").exists())
 

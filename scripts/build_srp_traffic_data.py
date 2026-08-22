@@ -3,7 +3,7 @@
 The input stays in Assetto Corsa's native X/Y/Z coordinate system.  Output
 coordinates use a private, locally metric Mercator frame; they are deliberately
 not a claim about SRP's real-world geography.  Telemetry uses the same formula
-in the browser, so no OSM calibration or road snapping is required.
+in the browser, so no external calibration or road snapping is required.
 """
 
 from __future__ import annotations
@@ -32,8 +32,7 @@ ROLE_DEFAULTS = {
 
 INTERSECTION_Y_THRESHOLD = 5.0
 
-# These are game-space landmarks, not OSM controls.  They remain useful route
-# destinations after the geographic calibration has been removed.
+# These game-space landmarks are used as local route destinations.
 DESTINATIONS = [
     {"name": "Shibaura PA", "ac": [1099.0, -4657.0]},
     {"name": "Tatsumi PA", "ac": [5850.9, -4644.5]},
@@ -461,11 +460,6 @@ def convert_traffic_plan(data: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
-    mock_route = _build_mock_route(features, route_connections)
-    mock_route_length_m = sum(
-        _route_distance(start, end) for start, end in zip(mock_route, mock_route[1:])
-    )
-
     output = {
         "type": "FeatureCollection",
         "schemaVersion": 1,
@@ -482,7 +476,6 @@ def convert_traffic_plan(data: dict[str, Any]) -> dict[str, Any]:
         "destinations": DESTINATIONS,
         "disallowedTransitions": disallowed_transitions,
         "routeConnections": route_connections,
-        "mockRoute": mock_route,
         "attribution": "Prototype lane geometry adapted from Bardaff's SRP Traffic Plan 1.02",
         "sourceUrl": "https://www.overtake.gg/downloads/traffic-plan-shutoko-revival-project.57715/",
         "redistribution": "Prototype evaluation only; confirm permission with the data author before public redistribution.",
@@ -493,18 +486,40 @@ def convert_traffic_plan(data: dict[str, Any]) -> dict[str, Any]:
             "intersectionCount": len(data.get("intersections") or []),
             "linkedIntersectionCount": linked_intersection_count,
             "routeConnectionCount": len(route_connections),
-            "mockRoutePointCount": len(mock_route),
-            "mockRouteLengthM": round(mock_route_length_m, 1),
         },
         "features": features,
     }
     return output
 
 
+def build_development_route_asset(traffic_data: dict[str, Any]) -> dict[str, Any]:
+    """Build generated-driving data kept outside the public frontend bundle."""
+    route = _build_mock_route(
+        traffic_data["features"], traffic_data["routeConnections"]
+    )
+    route_length_m = sum(
+        _route_distance(start, end) for start, end in zip(route, route[1:])
+    )
+    return {
+        "schemaVersion": 1,
+        "coordinateSpace": traffic_data["coordinateSpace"],
+        "route": route,
+        "statistics": {
+            "pointCount": len(route),
+            "lengthM": round(route_length_m, 1),
+        },
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="CSP Traffic Planner traffic.json")
     parser.add_argument("output", type=Path, help="Output MapLibre GeoJSON path")
+    parser.add_argument(
+        "--development-route-output",
+        type=Path,
+        help="Optional generated-driving route for the development server",
+    )
     return parser.parse_args()
 
 
@@ -517,6 +532,18 @@ def main() -> None:
         json.dumps(output, ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8",
     )
+    if args.development_route_output:
+        route_output = build_development_route_asset(output)
+        args.development_route_output.parent.mkdir(parents=True, exist_ok=True)
+        args.development_route_output.write_text(
+            json.dumps(route_output, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        route_stats = route_output["statistics"]
+        print(
+            f"Wrote {route_stats['pointCount']} development route points / "
+            f"{route_stats['lengthM']} meters to {args.development_route_output}"
+        )
     stats = output["statistics"]
     print(
         f"Wrote {stats['laneCount']} directed lanes / {stats['pointCount']} points "

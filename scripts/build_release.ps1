@@ -44,6 +44,8 @@ try {
         "--onefile",
         "--name", "AssettoGPS.Server",
         "--paths", "backend",
+        "--exclude-module", "mock_telemetry",
+        "--exclude-module", "dev_server",
         "--add-data", $frontendData,
         "--distpath", $distPath,
         "--workpath", $workPath,
@@ -55,13 +57,35 @@ try {
         throw "PyInstaller build failed."
     }
 
+    $serverExecutable = Join-Path $distPath "AssettoGPS.Server.exe"
+    $archiveListing = (
+        & uv run --group build pyi-archive_viewer -r -b $serverExecutable 2>&1 |
+            Out-String
+    )
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not inspect the packaged server archive."
+    }
+    if ($archiveListing -match "(?i)mock_telemetry|dev_server") {
+        throw "Development telemetry code was included in the public executable."
+    }
+
+    $frontendMockReferences = @(
+        Get-ChildItem -LiteralPath (Join-Path $repoRoot "frontend") -Recurse -File |
+            Select-String -SimpleMatch -Pattern "mock"
+    )
+    if ($frontendMockReferences.Count -gt 0) {
+        $locations = $frontendMockReferences |
+            ForEach-Object { "$($_.Path):$($_.LineNumber)" }
+        throw "Generated-telemetry references were found in the public frontend: $($locations -join ', ')"
+    }
+
     if (Test-Path -LiteralPath $stageRoot) {
         Remove-Item -LiteralPath $stageRoot -Recurse -Force
     }
     New-Item -ItemType Directory -Path $serverStage -Force | Out-Null
 
     Copy-Item -Path "ac_app\lua\AssettoGPS\*" -Destination $appStage -Recurse
-    Copy-Item -LiteralPath (Join-Path $distPath "AssettoGPS.Server.exe") -Destination $serverStage
+    Copy-Item -LiteralPath $serverExecutable -Destination $serverStage
     Copy-Item -LiteralPath "README.md" -Destination $stageRoot
 
     uv run --group build python tests\smoke_server.py (Join-Path $serverStage "AssettoGPS.Server.exe")

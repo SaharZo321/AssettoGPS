@@ -65,6 +65,11 @@ class MockTelemetryGenerator:
             (-5897.0, 14006.5), # Back to Daikoku PA
         ]
 
+    def reset(self) -> None:
+        """Restart the development drive from the beginning."""
+        self.start_time = time.time()
+        self.t = 0.0
+
     @staticmethod
     def _load_native_route(lane_asset_path: Path | None) -> List[Tuple[float, float, float]]:
         if not lane_asset_path or not lane_asset_path.is_file():
@@ -78,9 +83,12 @@ class MockTelemetryGenerator:
         origin_longitude, origin_latitude = coordinate_space['origin']
         longitude_scale = coordinate_space['metersPerLongitudeDegree']
         latitude_scale = coordinate_space['metersPerLatitudeDegree']
-        lanes = {feature['properties']['lane_id']: feature for feature in data['features']}
+        lanes = {
+            feature['properties']['lane_id']: feature
+            for feature in data.get('features', [])
+        }
         route = []
-        route_coordinates = data.get('mockRoute')
+        route_coordinates = data.get('route')
         if not route_coordinates:
             route_coordinates = [
                 coordinate
@@ -196,6 +204,7 @@ class MockTelemetryGenerator:
         return {
             "connected": True,
             "isMock": True,
+            "isGameRunning": False,
             "status": 2,  # Live
             "session": 2,  # Race
             "track": "shutoko_revival_project_beta",
