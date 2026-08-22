@@ -96,10 +96,9 @@
   display: grid;
   place-items: center;
   border: 3px solid #ffffff;
-  border-radius: 50% 50% 50% 12%;
+  border-radius: 50%;
   background: #0284c7;
   box-shadow: 0 4px 18px rgba(2, 132, 199, 0.8);
-  transform: rotate(45deg);
 }
 
 .navigation-car-arrow {
@@ -108,7 +107,7 @@
   border-left: 7px solid transparent;
   border-right: 7px solid transparent;
   border-bottom: 16px solid #ffffff;
-  transform: rotate(-45deg) translate(1px, 1px);
+  transform: translateY(-1px);
 }
 
 .road-direction-status {

@@ -65,7 +65,9 @@ class DirectedRoadMatcher {
     this.cellSize = 0.004;
     this.cells = new Map();
     this.previousWayId = null;
+    this.previousSegmentKey = null;
     this.previousPoint = null;
+    this.previousInputPoint = null;
     this.buildIndex(featureCollection);
   }
 
@@ -83,18 +85,30 @@ class DirectedRoadMatcher {
     return (Math.atan2(east, north) * 180) / Math.PI;
   }
 
+  static distance(from, to) {
+    const averageLatitude = ((from[1] + to[1]) * Math.PI) / 360;
+    return Math.hypot(
+      (from[0] - to[0]) * 111320 * Math.cos(averageLatitude),
+      (from[1] - to[1]) * 111320
+    );
+  }
+
   cellKey(x, y) {
     return `${x}:${y}`;
   }
 
   buildIndex(featureCollection) {
     for (const feature of featureCollection.features || []) {
-      const coordinates = feature.geometry?.coordinates || [];
+      const originalCoordinates = feature.geometry?.coordinates || [];
+      const oneway = String(feature.properties?.oneway || "").toLowerCase();
+      const coordinates = oneway === "-1" ? [...originalCoordinates].reverse() : originalCoordinates;
       for (let index = 0; index < coordinates.length - 1; index += 1) {
         const segment = {
           from: coordinates[index],
           to: coordinates[index + 1],
           wayId: feature.properties.osm_id,
+          key: `${feature.properties.osm_id}:${index}:${coordinates[index][0]}:${coordinates[index][1]}`,
+          oneWay: ["yes", "1", "true", "-1"].includes(oneway),
           properties: feature.properties,
         };
         const minX = Math.floor(Math.min(segment.from[0], segment.to[0]) / this.cellSize);
@@ -157,17 +171,30 @@ class DirectedRoadMatcher {
 
   match(point, vehicleBearing) {
     let best = null;
+    const inputMovement = this.previousInputPoint
+      ? DirectedRoadMatcher.distance(this.previousInputPoint, point)
+      : 0;
     for (const segment of this.candidates(point)) {
       const projection = this.project(point, segment);
       const roadBearing = DirectedRoadMatcher.bearing(segment.from, segment.to);
       const directionDifference = Math.abs(
         DirectedRoadMatcher.normalizeAngle(vehicleBearing - roadBearing)
       );
-      const continuityBonus = segment.wayId === this.previousWayId ? 35 : 0;
+      const continuityBonus = segment.key === this.previousSegmentKey
+        ? 75
+        : segment.wayId === this.previousWayId ? 40 : 0;
+      const projectedMovement = this.previousPoint
+        ? DirectedRoadMatcher.distance(this.previousPoint, projection.point)
+        : 0;
+      // A vehicle moving a few metres must not suddenly jump across an
+      // interchange to a different carriageway. Allow normal forward motion
+      // and connected-way transitions, but strongly discourage snap jumps.
+      const transitionAllowance = 18 + inputMovement * 4;
+      const transitionPenalty = Math.max(0, projectedMovement - transitionAllowance) * 1.4;
       // Distance selects the carriageway. Heading helps at overlaps, while a
       // reverse-driving car can still be matched and explicitly reported.
       const headingPenalty = Math.min(directionDifference, 180 - directionDifference) * 0.35;
-      const score = projection.distance + headingPenalty - continuityBonus;
+      const score = projection.distance + headingPenalty + transitionPenalty - continuityBonus;
       if (!best || score < best.score) {
         best = {
           ...projection,
@@ -175,6 +202,8 @@ class DirectedRoadMatcher {
           roadBearing,
           directionDifference,
           wayId: segment.wayId,
+          segmentKey: segment.key,
+          oneWay: segment.oneWay,
           properties: segment.properties,
         };
       }
@@ -182,8 +211,13 @@ class DirectedRoadMatcher {
 
     if (!best || best.distance > 1200) return null;
     this.previousWayId = best.wayId;
+    this.previousSegmentKey = best.segmentKey;
     this.previousPoint = best.point;
-    best.withFlow = best.directionDifference <= 90;
+    this.previousInputPoint = point;
+    best.withFlow = !best.oneWay || best.directionDifference <= 90;
+    best.alignedBearing = DirectedRoadMatcher.normalizeAngle(
+      best.roadBearing + (best.directionDifference > 90 ? 180 : 0)
+    );
     return best;
   }
 }
@@ -352,6 +386,9 @@ class NavigationMapRenderer {
     this.routeProgressIndex = 0;
     this.lastRouteProgressUpdate = 0;
     this.lastMarkerPoint = null;
+    this.displayPoint = null;
+    this.displayBearing = null;
+    this.lastRenderTime = 0;
     this.ready = false;
     this.active = false;
     this.trackInfo = null;
@@ -364,7 +401,6 @@ class NavigationMapRenderer {
     this.theme = document.documentElement.getAttribute("data-theme") || "dark";
     this.isFreeBrowsing = false;
     this.lastInteractionTime = 0;
-    this.lastCameraUpdate = 0;
     this.statusElement = document.getElementById("road-direction-status");
     this.guidanceElement = document.getElementById("route-guidance-status");
     this.recenterBtn = document.getElementById("btn-recenter");
@@ -555,8 +591,8 @@ class NavigationMapRenderer {
     this.marker = new window.maplibregl.Marker({
       element: markerElement,
       anchor: "center",
-      rotationAlignment: "map",
-      pitchAlignment: "map",
+      rotationAlignment: "viewport",
+      pitchAlignment: "viewport",
     })
       .setLngLat([139.745, 35.62])
       .addTo(this.map);
@@ -753,28 +789,49 @@ class NavigationMapRenderer {
       interpolator.currentHeading
     );
     const match = this.matcher.match(longitudeLatitude, vehicleBearing);
-    const markerPoint = match?.point || longitudeLatitude;
-    this.lastMarkerPoint = markerPoint;
-    this.marker.setLngLat(markerPoint).setRotation(vehicleBearing);
+    const targetPoint = match?.point || longitudeLatitude;
+    const targetBearing = match?.alignedBearing ?? vehicleBearing;
+    const now = performance.now();
+    const deltaSeconds = this.lastRenderTime
+      ? Math.min((now - this.lastRenderTime) / 1000, 0.1)
+      : 1 / 60;
+    this.lastRenderTime = now;
+    if (!this.displayPoint || this.displayBearing === null) {
+      this.displayPoint = [...targetPoint];
+      this.displayBearing = targetBearing;
+    } else {
+      const positionFactor = 1 - Math.exp(-16 * deltaSeconds);
+      const bearingFactor = 1 - Math.exp(-12 * deltaSeconds);
+      this.displayPoint[0] += (targetPoint[0] - this.displayPoint[0]) * positionFactor;
+      this.displayPoint[1] += (targetPoint[1] - this.displayPoint[1]) * positionFactor;
+      const bearingDifference = DirectedRoadMatcher.normalizeAngle(targetBearing - this.displayBearing);
+      this.displayBearing = DirectedRoadMatcher.normalizeAngle(
+        this.displayBearing + bearingDifference * bearingFactor
+      );
+    }
+    this.lastMarkerPoint = targetPoint;
     this.setDirectionStatus(match);
-    this.updateRouteProgress(markerPoint);
+    this.updateRouteProgress(targetPoint);
 
     if (this.isFreeBrowsing && Date.now() - this.lastInteractionTime > 15000 && interpolator.currentSpeed > 5) {
       this.recenter();
     }
-    if (this.isFreeBrowsing) return;
-
-    const now = performance.now();
-    if (now - this.lastCameraUpdate < 50) return;
-    this.lastCameraUpdate = now;
-    const speedRatio = Math.min(Math.max(interpolator.currentSpeed / 250, 0), 1);
-    const zoom = this.autoZoomEnabled ? 15.6 - speedRatio * 1.7 : 14.8;
-    this.map.jumpTo({
-      center: markerPoint,
-      bearing: this.orientationMode === "headingUp" ? vehicleBearing : 0,
-      pitch: this.tiltAngle,
-      zoom,
-    });
+    if (!this.isFreeBrowsing) {
+      const speedRatio = Math.min(Math.max(interpolator.currentSpeed / 250, 0), 1);
+      const zoom = this.autoZoomEnabled ? 15.6 - speedRatio * 1.7 : 14.8;
+      // Camera and marker must move in the same animation frame. Throttling
+      // only the camera makes a centered marker drift and snap back.
+      this.map.jumpTo({
+        center: this.displayPoint,
+        bearing: this.orientationMode === "headingUp" ? this.displayBearing : 0,
+        pitch: this.tiltAngle,
+        zoom,
+      });
+    }
+    const screenBearing = DirectedRoadMatcher.normalizeAngle(
+      this.displayBearing - this.map.getBearing()
+    );
+    this.marker.setLngLat(this.displayPoint).setRotation(screenBearing);
   }
 }
 

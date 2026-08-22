@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 import sys
 import unittest
 import uuid
@@ -16,6 +17,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 import ac_shared_memory
 import ac_track_finder
+import mock_telemetry
 import server
 
 
@@ -48,6 +50,27 @@ class SharedMemoryTests(unittest.TestCase):
             self.assertFalse(reader.connect())
             self.assertFalse(reader.is_connected)
             self.assertTrue(all(not ac_shared_memory.named_mapping_exists(name) for name in names))
+
+
+class MockTelemetryTests(unittest.TestCase):
+    def test_heading_matches_forward_motion_and_velocity(self):
+        with mock.patch.object(mock_telemetry.time, "time", return_value=1_000.0):
+            generator = mock_telemetry.MockTelemetryGenerator()
+        with mock.patch.object(mock_telemetry.time, "time", return_value=1_020.0):
+            first = generator.get_frame()
+        with mock.patch.object(mock_telemetry.time, "time", return_value=1_020.02):
+            second = generator.get_frame()
+
+        dx = second["carPosition"][0] - first["carPosition"][0]
+        dz = second["carPosition"][2] - first["carPosition"][2]
+        motion_heading = math.atan2(dx, dz)
+        velocity_heading = math.atan2(first["velocity"][0], first["velocity"][2])
+
+        def angle_error(left: float, right: float) -> float:
+            return abs((left - right + math.pi) % (2 * math.pi) - math.pi)
+
+        self.assertLess(angle_error(first["headingRad"], motion_heading), math.radians(2))
+        self.assertLess(angle_error(first["headingRad"], velocity_heading), math.radians(0.1))
 
 
 class ControlEndpointTests(unittest.TestCase):
@@ -205,6 +228,9 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertIn("setDestination(destinationName)", renderer)
         self.assertIn('getSource("active-route")', renderer)
         self.assertIn("oneway", renderer)
+        self.assertIn('rotationAlignment: "viewport"', renderer)
+        self.assertIn('pitchAlignment: "viewport"', renderer)
+        self.assertIn("match?.alignedBearing", renderer)
 
 
 if __name__ == "__main__":

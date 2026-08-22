@@ -1,6 +1,6 @@
 [project]
 name = "assetto-minimap"
-version = "0.2.0b6"
+version = "0.2.0b7"
 description = "Waze/GPS Minimap and Telemetry companion for Assetto Corsa & Shutoko Revival Project"
 readme = "README.md"
 requires-python = ">=3.10"
