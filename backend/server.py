@@ -57,13 +57,49 @@ server_state = {
     "lastFrame": None,
 }
 
-# Environmental lighting state (from CSP bridge, tunnels, or manual overrides)
+# Environmental lighting state (from CSP bridge, tunnels, or in-game app)
 environment_state = {
     "headlights": False,
     "sunAngle": 1.0,  # 1.0 = noon, 0.0 = sunset, -1.0 = midnight
     "isNight": False,
-    "source": "auto",  # "auto", "csp", "manual"
+    "ambient": 1.0,
+    "source": "auto",  # "auto", "csp", "in-game", "manual"
 }
+
+
+def start_udp_listener(port: int = 8088):
+    """Background listener for in-game AssettoGPS companion telemetry packets"""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.bind(("0.0.0.0", port))
+    except Exception:
+        try:
+            sock.bind(("127.0.0.1", port))
+        except Exception as e:
+            print(f"UDP listener bind error on port {port}: {e}")
+            return
+
+    while True:
+        try:
+            data, _ = sock.recvfrom(2048)
+            payload = json.loads(data.decode("utf-8"))
+            if "headlights" in payload:
+                environment_state["headlights"] = bool(payload["headlights"])
+            if "isNight" in payload:
+                environment_state["isNight"] = bool(payload["isNight"])
+            if "ambient" in payload:
+                try:
+                    environment_state["ambient"] = float(payload["ambient"])
+                except (ValueError, TypeError):
+                    pass
+            environment_state["source"] = "in-game"
+        except Exception:
+            pass
+
+
+# Start UDP listener daemon thread
+udp_thread = threading.Thread(target=start_udp_listener, daemon=True)
+udp_thread.start()
 
 
 def get_local_ip() -> str:
@@ -349,7 +385,24 @@ if FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
 
 
+def sync_ac_plugin():
+    """Ensures the in-game AssettoGPS Python app is installed in the user's Assetto Corsa folder"""
+    try:
+        if track_finder.ac_root and track_finder.ac_root.exists():
+            target_dir = track_finder.ac_root / "apps" / "python" / "AssettoGPS"
+            target_dir.mkdir(parents=True, exist_ok=True)
+            src_file = BASE_DIR / "ac_app" / "AssettoGPS" / "AssettoGPS.py"
+            dst_file = target_dir / "AssettoGPS.py"
+            if src_file.exists():
+                import shutil
+                shutil.copyfile(src_file, dst_file)
+                print(f"  🎮 In-Game AC App Synced: {dst_file}")
+    except Exception as e:
+        print(f"Could not auto-sync AC in-game plugin: {e}")
+
+
 def main():
+    sync_ac_plugin()
     port = int(os.environ.get("PORT", 8080))
     print_startup_banner(port)
     backend_dir = str(Path(__file__).resolve().parent)
