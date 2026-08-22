@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
-  "method": "affine-with-local-idw-correction",
+  "method": "affine-with-softened-idw-correction",
+  "smoothingRadius": 500,
   "affine": {
     "longitude": [
       1.129218020710053e-05,

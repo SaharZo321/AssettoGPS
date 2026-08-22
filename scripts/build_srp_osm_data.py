@@ -91,10 +91,11 @@ def build_calibration() -> dict[str, Any]:
         ]})
     return {
         "schemaVersion": 1,
-        "method": "affine-with-local-idw-correction",
+        "method": "affine-with-softened-idw-correction",
+        "smoothingRadius": 500,
         "affine": {"longitude": longitude, "latitude": latitude},
         "anchors": anchors,
-        "notes": "SRP road geometry differs locally from present-day Tokyo; map matching remains best-effort.",
+        "notes": "SRP road geometry differs locally from present-day Tokyo; softened correction preserves continuous motion and map matching remains best-effort.",
     }
 
 

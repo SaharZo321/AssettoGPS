@@ -1,9 +1,9 @@
 /**
  * Offline MapLibre renderer for SRP.
  *
- * MapLibre renders the OSM extract.  Assetto Corsa coordinates are locally
- * calibrated and then snapped to OSM's directed motorway ways. The same
- * local extract provides the one-way graph used for offline route planning.
+ * MapLibre renders the OSM extract. Assetto Corsa coordinates are smoothly
+ * calibrated while nearby OSM motorway ways provide direction matching. The
+ * same local extract provides the one-way graph used for route planning.
  */
 
 class SrpCoordinateCalibration {
@@ -11,6 +11,7 @@ class SrpCoordinateCalibration {
     this.longitude = config.affine.longitude;
     this.latitude = config.affine.latitude;
     this.anchors = config.anchors || [];
+    this.smoothingRadius = Number(config.smoothingRadius) || 500;
   }
 
   affinePoint(x, z) {
@@ -27,15 +28,15 @@ class SrpCoordinateCalibration {
     let longitudeCorrection = 0;
     let latitudeCorrection = 0;
     let totalWeight = 0;
+    const smoothingSquared = this.smoothingRadius * this.smoothingRadius;
     for (const anchor of this.anchors) {
       const dx = x - anchor.ac[0];
       const dz = z - anchor.ac[1];
       const distanceSquared = dx * dx + dz * dz;
-      if (distanceSquared < 1e-6) return [...anchor.osm];
-
-      // Shepard interpolation makes the correction converge continuously on
-      // each authoritative control instead of creating a seam around it.
-      const weight = 1 / Math.max(distanceSquared, 1);
+      // A finite radius prevents the correction field from accelerating
+      // sharply near a control point. Singular inverse-distance weights made
+      // a smoothly moving car jump hundreds of metres between map frames.
+      const weight = 1 / (distanceSquared + smoothingSquared);
       longitudeCorrection += anchor.residual[0] * weight;
       latitudeCorrection += anchor.residual[1] * weight;
       totalWeight += weight;
@@ -392,6 +393,7 @@ class NavigationMapRenderer {
     this.courseReferencePoint = null;
     this.courseBearing = null;
     this.lastTravelBearing = null;
+    this.maxReliableMatchDistance = 180;
     this.ready = false;
     this.active = false;
     this.trackInfo = null;
@@ -842,8 +844,14 @@ class NavigationMapRenderer {
     );
     this.lastTravelBearing = travelBearing;
     const match = this.matcher.match(longitudeLatitude, travelBearing);
-    const targetPoint = match?.point || longitudeLatitude;
-    const targetBearing = match?.alignedBearing ?? travelBearing;
+    const reliableMatch = match && match.distance <= this.maxReliableMatchDistance
+      ? match
+      : null;
+    // Position must remain a continuous function of AC coordinates. OSM road
+    // matching informs direction and routing, but never relocates the camera
+    // or marker to a different carriageway.
+    const targetPoint = longitudeLatitude;
+    const targetBearing = reliableMatch?.alignedBearing ?? travelBearing;
     const now = performance.now();
     const deltaSeconds = this.lastRenderTime
       ? Math.min((now - this.lastRenderTime) / 1000, 0.1)
@@ -862,9 +870,9 @@ class NavigationMapRenderer {
         this.displayBearing + bearingDifference * bearingFactor
       );
     }
-    this.lastMarkerPoint = targetPoint;
-    this.setDirectionStatus(match);
-    this.updateRouteProgress(targetPoint);
+    this.lastMarkerPoint = reliableMatch?.point || targetPoint;
+    this.setDirectionStatus(reliableMatch);
+    this.updateRouteProgress(this.lastMarkerPoint);
 
     if (this.isFreeBrowsing && Date.now() - this.lastInteractionTime > 15000 && interpolator.currentSpeed > 5) {
       this.recenter();

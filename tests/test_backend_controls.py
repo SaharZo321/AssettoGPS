@@ -197,7 +197,8 @@ class SrpVectorMapTests(unittest.TestCase):
         )
         calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(calibration["method"], "affine-with-local-idw-correction")
+        self.assertEqual(calibration["method"], "affine-with-softened-idw-correction")
+        self.assertEqual(calibration["smoothingRadius"], 500)
         self.assertGreaterEqual(len(calibration["anchors"]), 12)
         self.assertEqual(len(calibration["affine"]["longitude"]), 3)
         self.assertEqual(len(calibration["affine"]["latitude"]), 3)
@@ -230,7 +231,9 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertIn("oneway", renderer)
         self.assertIn('rotationAlignment: "viewport"', renderer)
         self.assertIn('pitchAlignment: "viewport"', renderer)
-        self.assertIn("match?.alignedBearing", renderer)
+        self.assertIn("const targetPoint = longitudeLatitude;", renderer)
+        self.assertNotIn("const targetPoint = match?.point", renderer)
+        self.assertIn("reliableMatch?.alignedBearing", renderer)
         self.assertIn("resolveTravelBearing", renderer)
         self.assertIn("this.recenter();", renderer)
 
