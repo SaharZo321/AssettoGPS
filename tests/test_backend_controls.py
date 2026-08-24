@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import math
+import re
 import sys
 import unittest
 import uuid
@@ -13,13 +14,17 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 
-BACKEND_DIR = Path(__file__).resolve().parents[1] / "backend"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_DIR = REPO_ROOT / "backend"
+SCRIPTS_DIR = REPO_ROOT / "scripts"
 sys.path.insert(0, str(BACKEND_DIR))
+sys.path.insert(0, str(SCRIPTS_DIR))
 
 import ac_shared_memory
 import ac_track_finder
 import mock_telemetry
 import server
+import verify_srp_routing
 
 
 def make_request(host: str, control_header: str | None = None) -> Request:
@@ -245,6 +250,182 @@ class SrpVectorMapTests(unittest.TestCase):
             "this.origin[1] - z / this.metersPerLatitudeDegree", renderer
         )
 
+    def test_maplibre_includes_every_named_srp_mini_map_location(self):
+        renderer = (
+            server.FRONTEND_DIR / "src" / "navigation-map-renderer.ts"
+        ).read_text(encoding="utf-8")
+        stylesheet = (server.FRONTEND_DIR / "css" / "style.css").read_text(
+            encoding="utf-8"
+        )
+
+        expected_labels = (
+            "Shinjuku Station",
+            "Yoyogi PA",
+            "Tokyo Tower",
+            "Shibuya Station",
+            "Rainbow Bridge",
+            "Odaiba",
+            "Oi PA",
+            "Heiwajima PA",
+            "Daishi PA",
+            "Haneda Airport",
+            "Tsurumi Tsubasa Bridge",
+            "Minato Mirai Yokohama",
+            "Yokohama Bay Bridge",
+        )
+        for label in expected_labels:
+            self.assertIn(f'name: "{label}"', renderer)
+        self.assertIn("SRP_MAP_LOCATIONS", renderer)
+        self.assertIn("this.addLocationLabels()", renderer)
+        self.assertIn("srp-location-marker-label", stylesheet)
+
+    @staticmethod
+    def _parse_map_locations(renderer: str) -> dict[str, tuple[float, float]]:
+        block = re.search(
+            r"const SRP_MAP_LOCATIONS: SourceMapLocation\[\] = \[(.*?)\n\];",
+            renderer,
+            re.S,
+        )
+        assert block is not None, "SRP_MAP_LOCATIONS table is missing"
+        entries = re.findall(
+            r'name: "([^"]+)".*?ac: \[(-?[\d.]+), (-?[\d.]+)\]', block.group(1)
+        )
+        return {name: (float(x), float(z)) for name, x, z in entries}
+
+    @staticmethod
+    def _parse_map_location_kinds(renderer: str) -> dict[str, str]:
+        return dict(re.findall(r'name: "([^"]+)", kind: "([^"]+)"', renderer))
+
+    def test_srp_map_locations_match_the_calibrated_references(self):
+        renderer = (
+            server.FRONTEND_DIR / "src" / "navigation-map-renderer.ts"
+        ).read_text(encoding="utf-8")
+        locations = self._parse_map_locations(renderer)
+
+        pois = {poi["shortName"]: poi["pos"] for poi in ac_track_finder.SRP_POIS}
+        roads = json.loads(
+            (
+                server.FRONTEND_DIR / "assets" / "maps" / "srp-traffic-lanes.geojson"
+            ).read_text(encoding="utf-8")
+        )
+        destinations = {item["name"]: item["ac"] for item in roads["destinations"]}
+
+        heiwajima_north = pois["Heiwajima PA (N)"]
+        heiwajima_south = pois["Heiwajima PA (S)"]
+        expected = {
+            "Shinjuku Station": verify_srp_routing.SHINJUKU_STATION,
+            "Yoyogi PA": (pois["Yoyogi PA"][0], pois["Yoyogi PA"][2]),
+            "Tokyo Tower": (pois["Tokyo Tower"][0], pois["Tokyo Tower"][2]),
+            "Shibuya Station": (pois["Shibuya"][0], pois["Shibuya"][2]),
+            "Rainbow Bridge": (
+                pois["Rainbow Bridge"][0],
+                pois["Rainbow Bridge"][2],
+            ),
+            "Heiwajima PA": (
+                (heiwajima_north[0] + heiwajima_south[0]) / 2,
+                (heiwajima_north[2] + heiwajima_south[2]) / 2,
+            ),
+            "Daishi PA": (pois["Daishi PA"][0], pois["Daishi PA"][2]),
+            "Haneda Airport": tuple(destinations["Haneda Airport"]),
+            "Tsurumi Tsubasa Bridge": (
+                pois["Tsurumi Tsubasa Bridge"][0],
+                pois["Tsurumi Tsubasa Bridge"][2],
+            ),
+            "Minato Mirai Yokohama": (
+                pois["Minato Mirai Yokohama"][0],
+                pois["Minato Mirai Yokohama"][2],
+            ),
+            "Yokohama Bay Bridge": (
+                pois["Yokohama Bay Bridge"][0],
+                pois["Yokohama Bay Bridge"][2],
+            ),
+        }
+
+        for name, (x, z) in expected.items():
+            with self.subTest(location=name):
+                actual = locations[name]
+                self.assertLess(
+                    math.dist(actual, (x, z)),
+                    25.0,
+                    f"{name} has drifted from its calibrated reference",
+                )
+
+        # Odaiba and Oi PA have no exact reference - they are derived from the
+        # surrounding lane geometry. Asserting them against a copy of their own
+        # coordinates would prove nothing, so pin them relative to the anchors
+        # above instead. In AC space +x runs east and +z runs south.
+        rainbow_x, _, rainbow_z = pois["Rainbow Bridge"]
+        ariake_x, _, ariake_z = pois["Ariake JCT"]
+        haneda_x, haneda_z = destinations["Haneda Airport"]
+        heiwajima_x = (heiwajima_north[0] + heiwajima_south[0]) / 2
+        heiwajima_z = (heiwajima_north[2] + heiwajima_south[2]) / 2
+
+        odaiba_x, odaiba_z = locations["Odaiba"]
+        self.assertTrue(
+            rainbow_x < odaiba_x < ariake_x and rainbow_z < odaiba_z < ariake_z,
+            "Odaiba must sit on the Route 11 corridor between Rainbow Bridge "
+            f"and Ariake JCT, got {locations['Odaiba']}",
+        )
+
+        oi_x, oi_z = locations["Oi PA"]
+        self.assertTrue(
+            heiwajima_x < oi_x < haneda_x,
+            f"Oi PA must sit between Heiwajima PA and Haneda, got x={oi_x}",
+        )
+        self.assertTrue(
+            ariake_z < oi_z < heiwajima_z < haneda_z,
+            "Oi PA must sit on the Wangan south of Ariake JCT and north of "
+            f"Heiwajima PA, got z={oi_z}",
+        )
+
+        # The label deliberately does not follow SRP_POIS oi_pa, the one rough
+        # estimate in that table. If it is ever recalibrated this fails, so the
+        # map label gets revisited alongside it.
+        self.assertEqual(
+            (pois["Oi PA"][0], pois["Oi PA"][2]),
+            (1150.0, 1680.0),
+            "SRP_POIS oi_pa changed - recheck the Oi PA map label against it",
+        )
+
+    def test_every_srp_map_location_sits_on_the_modelled_map(self):
+        renderer = (
+            server.FRONTEND_DIR / "src" / "navigation-map-renderer.ts"
+        ).read_text(encoding="utf-8")
+        locations = self._parse_map_locations(renderer)
+        kinds = self._parse_map_location_kinds(renderer)
+        roads = json.loads(
+            (
+                server.FRONTEND_DIR / "assets" / "maps" / "srp-traffic-lanes.geojson"
+            ).read_text(encoding="utf-8")
+        )
+        space = roads["coordinateSpace"]
+        origin_lon, origin_lat = space["origin"]
+        lon_scale = space["metersPerLongitudeDegree"]
+        lat_scale = space["metersPerLatitudeDegree"]
+
+        lane_points = [
+            (
+                (point[0] - origin_lon) * lon_scale,
+                (origin_lat - point[1]) * lat_scale,
+            )
+            for feature in roads["features"]
+            for point in feature["geometry"]["coordinates"]
+        ]
+
+        # Anything anchored to a driveable feature has to sit on the network.
+        # Landmarks stand beside the road and area names cover a whole district,
+        # so those get an explicit larger budget instead of a blanket tolerance.
+        lane_budget_m = {"district": 250.0, "landmark": 200.0}
+        for name, position in locations.items():
+            with self.subTest(location=name):
+                budget = lane_budget_m.get(kinds[name], 100.0)
+                nearest = min(math.dist(position, point) for point in lane_points)
+                self.assertLess(
+                    nearest,
+                    budget,
+                    f"{name} is {nearest:.0f}m from the nearest SRP lane",
+                )
+
     def test_frontend_is_navigation_only_and_uses_local_maplibre(self):
         index = (server.FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
         controller = (server.FRONTEND_DIR / "src" / "navigation-controller.ts").read_text(
@@ -328,13 +509,15 @@ class SrpVectorMapTests(unittest.TestCase):
         self.assertIn('center: this.displayPoint', navigation)
         self.assertIn('this.orientationMode === "headingUp" ? this.displayBearing : 0', navigation)
 
-    def test_navigation_car_uses_lower_third_tracking_position(self):
+    def test_navigation_car_uses_lower_fifth_tracking_position(self):
         renderer = (
             server.FRONTEND_DIR / "src" / "navigation-map-renderer.ts"
         ).read_text(encoding="utf-8")
 
+        # MapLibre centres on the padded box, so a top padding of 3/5 height
+        # puts the car at (3/5 + 1) / 2 = 4/5 down the screen.
         self.assertIn("getTrackingPadding()", renderer)
-        self.assertIn("top: Math.round(height / 3)", renderer)
+        self.assertIn("top: Math.round((height * 3) / 5)", renderer)
         self.assertGreaterEqual(
             renderer.count("padding: this.getTrackingPadding()"),
             2,
