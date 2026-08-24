@@ -1083,6 +1083,12 @@ class NavigationMapRenderer {
       anchor: "center",
       rotationAlignment: "viewport",
       pitchAlignment: "viewport",
+      // MapLibre snaps marker elements to whole pixels by default. The tracked
+      // car sits at the camera centre, which lands on a half pixel for every
+      // viewport height where padding + height is odd. Rounding then flips the
+      // marker between two pixel rows on alternating frames, which reads as a
+      // constant vibration. Sub-pixel placement keeps it exactly on the centre.
+      subpixelPositioning: true,
     })
       .setLngLat(initialCenter)
       .addTo(this.map);
