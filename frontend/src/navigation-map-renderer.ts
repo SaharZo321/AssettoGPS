@@ -1106,6 +1106,7 @@ class NavigationMapRenderer {
     this.map.on("pitchstart", markBrowsing);
     this.ready = true;
     this.setTheme(this.theme);
+    this.applyHorizonFog();
     this.applyTrackSupport();
     return this;
   }
@@ -1285,7 +1286,13 @@ class NavigationMapRenderer {
     this.is3D = this.tiltAngle > 10;
     localStorage.setItem("gps_3d_tilt", this.is3D ? "true" : "false");
     if (this.map) this.map.easeTo({ pitch: this.tiltAngle, duration: 250 });
+    this.applyHorizonFog();
     return this.is3D;
+  }
+
+  /** The horizon haze only makes sense on a tilted map, so CSS keys off this. */
+  applyHorizonFog(): void {
+    document.documentElement.setAttribute("data-map-3d", this.is3D ? "true" : "false");
   }
 
   toggleTilt(): boolean {
