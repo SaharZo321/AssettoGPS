@@ -12,12 +12,14 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="/vendor/maplibre-gl/maplibre-gl.css?v=6.5.0">
   <link rel="stylesheet" href="/css/waze-theme.css?v=43">
-  <link rel="stylesheet" href="/css/style.css?v=48">
+  <link rel="stylesheet" href="/css/style.css?v=49">
 </head>
 <body>
   <div id="app-container">
     <!-- Offline game-native Navigation Map -->
     <div id="navigation-map" aria-label="Offline SRP game-lane navigation map"></div>
+    <!-- Distance haze over the far end of the tilted map. 3D mode only. -->
+    <div id="map-horizon-fog" aria-hidden="true"></div>
     <div id="navigation-map-state" class="navigation-map-state" role="status" hidden></div>
     <div id="road-direction-status" class="road-direction-status direction-unknown" role="status" hidden>
       <span class="direction-icon">.</span><span>Finding carriageway...</span>
@@ -347,7 +349,7 @@
   <script type="module" src="/js/maplibre-bootstrap.js?v=1"></script>
   <script src="/js/audio-alerts.js?v=43"></script>
   <script src="/js/interpolation.js?v=43"></script>
-  <script src="/js/navigation-map-renderer.js?v=59"></script>
+  <script src="/js/navigation-map-renderer.js?v=60"></script>
   <script src="/js/navigation-controller.js?v=2"></script>
   <script src="/js/navigation-ui.js?v=45"></script>
   <script src="/js/app.js?v=51"></script>
