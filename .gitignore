@@ -48,3 +48,6 @@ node_modules/
 frontend/js/
 frontend/vendor/maplibre-gl/
 *.tsbuildinfo
+
+# Local WSL dev helper
+dev-wsl.sh

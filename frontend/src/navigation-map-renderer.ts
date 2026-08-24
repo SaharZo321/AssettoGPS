@@ -53,6 +53,14 @@ interface SourceDestination {
   ac: [number, number];
 }
 
+type MapLocationKind = "airport" | "bridge" | "district" | "landmark" | "parking" | "station";
+
+interface SourceMapLocation {
+  name: string;
+  kind: MapLocationKind;
+  ac: [number, number];
+}
+
 type RouteConnection = [number, number, number, number, number, number, LaneId, LaneId, LaneId, ...unknown[]];
 
 interface LaneFeatureCollection {
@@ -161,6 +169,44 @@ interface Window {
 }
 
 const SRP_NAVIGATION_AUTO_ZOOM_SCALE = 1.25;
+const SRP_LOCATION_LABEL_MIN_ZOOM = 11;
+
+// Label anchors in SRP game coordinates (x, z), matching the calibrated POI
+// table in backend/ac_track_finder.py and the traffic-plan destinations in
+// srp-traffic-lanes.geojson. Keep these in sync with those references -
+// tests/test_backend_controls.py pins each entry to its cited source, and
+// pins the two derived entries relative to the surrounding anchors.
+const SRP_MAP_LOCATIONS: SourceMapLocation[] = [
+  // SHINJUKU_STATION in scripts/verify_srp_routing.py
+  { name: "Shinjuku Station", kind: "station", ac: [-4244.1, -10016.8] },
+  // SRP_POIS yoyogi_pa
+  { name: "Yoyogi PA", kind: "parking", ac: [-4345.5, -8875.0] },
+  // SRP_POIS tokyo_tower
+  { name: "Tokyo Tower", kind: "landmark", ac: [-3.8, -6053.3] },
+  // SRP_POIS shibuya_3 (Shibuya Crossing, adjacent to the station)
+  { name: "Shibuya Station", kind: "station", ac: [-4106.3, -6450.6] },
+  // SRP_POIS rainbow_bridge
+  { name: "Rainbow Bridge", kind: "bridge", ac: [1566.9, -3909.6] },
+  // No POI entry: derived from the Daiba surface-road lanes, on the Route 11
+  // corridor between SRP_POIS rainbow_bridge and ariake_jct
+  { name: "Odaiba", kind: "district", ac: [2334.0, -3513.6] },
+  // SRP_POIS oi_pa exists but is the one rough estimate in that table (whole-
+  // number coordinates, ~1.3km off the Wangan), so this is derived from the Oi
+  // service-road lanes instead
+  { name: "Oi PA", kind: "parking", ac: [988.3, 427.8] },
+  // Midpoint of SRP_POIS heiwajima_pa_n and heiwajima_pa_s
+  { name: "Heiwajima PA", kind: "parking", ac: [-200.6, 1390.1] },
+  // SRP_POIS daishi_pa
+  { name: "Daishi PA", kind: "parking", ac: [-308.7, 6141.9] },
+  // "Haneda Airport" destination in srp-traffic-lanes.geojson
+  { name: "Haneda Airport", kind: "airport", ac: [3271.8, 4285.3] },
+  // SRP_POIS tsurumi_bridge
+  { name: "Tsurumi Tsubasa Bridge", kind: "bridge", ac: [53.0, 10965.4] },
+  // SRP_POIS minato_mirai
+  { name: "Minato Mirai Yokohama", kind: "district", ac: [-10954.5, 14006.5] },
+  // SRP_POIS yokohama_bay_bridge
+  { name: "Yokohama Bay Bridge", kind: "bridge", ac: [-6756.5, 15196.5] },
+];
 
 class SrpGameProjection {
   readonly origin: LngLat;
@@ -712,6 +758,7 @@ class NavigationMapRenderer {
   readonly container: HTMLElement | null;
   map: MapLibreMap | null;
   marker: MapLibreMarker | null;
+  locationMarkers: MapLibreMarker[];
   projection: SrpGameProjection | null;
   matcher: DirectedRoadMatcher | null;
   graph: DirectedRoadGraph | null;
@@ -762,6 +809,7 @@ class NavigationMapRenderer {
     this.container = document.getElementById(containerId);
     this.map = null;
     this.marker = null;
+    this.locationMarkers = [];
     this.projection = null;
     this.matcher = null;
     this.graph = null;
@@ -915,6 +963,42 @@ class NavigationMapRenderer {
     return context.getImageData(0, 0, size, size);
   }
 
+  addLocationLabels(): void {
+    if (!this.map || !this.projection || !window.maplibregl) return;
+    for (const location of SRP_MAP_LOCATIONS) {
+      const element = document.createElement("div");
+      element.className = "srp-location-marker";
+      element.dataset.kind = location.kind;
+      element.setAttribute("aria-hidden", "true");
+
+      const dot = document.createElement("span");
+      dot.className = "srp-location-dot";
+      const label = document.createElement("span");
+      label.className = "srp-location-marker-label";
+      label.textContent = location.name;
+      element.append(dot, label);
+
+      const marker = new window.maplibregl.Marker({
+        element,
+        anchor: "center",
+        rotationAlignment: "viewport",
+        pitchAlignment: "viewport",
+      })
+        .setLngLat(this.projection.toLngLat(location.ac[0], location.ac[1]))
+        .addTo(this.map);
+      this.locationMarkers.push(marker);
+    }
+    this.updateLocationLabelDensity();
+    this.map.on("zoom", () => this.updateLocationLabelDensity());
+  }
+
+  updateLocationLabelDensity(): void {
+    const compact = (this.map?.getZoom() || 0) < SRP_LOCATION_LABEL_MIN_ZOOM;
+    for (const marker of this.locationMarkers) {
+      marker.getElement().classList.toggle("location-label-compact", compact);
+    }
+  }
+
   async initialize(): Promise<this> {
     if (!this.container) throw new Error("Navigation map container is missing");
     if (!window.maplibregl) throw new Error("MapLibre GL JS is unavailable");
@@ -972,6 +1056,7 @@ class NavigationMapRenderer {
       });
     });
 
+    this.addLocationLabels();
     const arrow = this.createArrowImage();
     this.map.addImage("road-direction-arrow", arrow, { pixelRatio: 2 });
     this.map.addLayer({
@@ -1081,6 +1166,7 @@ class NavigationMapRenderer {
       }
     }
     if (this.marker) this.marker.getElement().hidden = !supported;
+    for (const marker of this.locationMarkers) marker.getElement().hidden = !supported;
     if (!supported && (this.destination || this.activeRoute)) this.clearDestination();
     if (this.statusElement) this.statusElement.hidden = !this.active || !supported;
     if (this.guidanceElement) {
@@ -1118,8 +1204,11 @@ class NavigationMapRenderer {
 
   getTrackingPadding(): MapLibrePadding {
     const height = this.map?.getContainer()?.clientHeight || 0;
+    // MapLibre centres on the padded box, so the car ends up at the midpoint of
+    // [top, height]. To park it a fifth of the way up from the bottom - i.e. at
+    // 4/5 of the screen - the padding has to be 2 * (4/5) * height - height.
     return {
-      top: Math.round(height / 3),
+      top: Math.round((height * 3) / 5),
       right: 0,
       bottom: 0,
       left: 0,
