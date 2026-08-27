@@ -1026,18 +1026,13 @@ class NavigationMapRenderer {
       pitch: this.tiltAngle,
       minZoom: 8,
       maxZoom: 18.5,
+      // Lane-data credit lives in the settings sheet footer, not over the map.
       attributionControl: false,
       maplibreLogo: false,
       dragRotate: true,
       pitchWithRotate: false,
       touchPitch: false,
     });
-    this.map.addControl(
-      new window.maplibregl!.AttributionControl({
-        compact: true,
-        customAttribution: '<a href="https://www.overtake.gg/downloads/traffic-plan-shutoko-revival-project.57715/" target="_blank" rel="noopener">Prototype lanes: Bardaff</a>',
-      })
-    );
 
     await new Promise<void>((resolve, reject) => {
       const timeout = window.setTimeout(
