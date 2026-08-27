@@ -168,28 +168,53 @@ def get_local_ip() -> str:
     return ip
 
 
+def get_all_local_ips() -> list:
+    """Finds every IPv4 address bound to a local interface (LAN, VPN, etc).
+
+    The server binds 0.0.0.0, so it's reachable on all of them; the OS
+    routing trick in get_local_ip() only reports whichever one is the
+    current default route, which can be a VPN adapter instead of the LAN.
+    """
+    ips = set()
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ips.add(info[4][0])
+    except socket.gaierror:
+        pass
+    primary = get_local_ip()
+    ips.add(primary)
+    ips = {ip for ip in ips if not ip.startswith("127.")}
+    return sorted(ips) or [primary]
+
+
 def print_startup_banner(port: int = 8080):
-    """Prints a stylish banner with pairing URL and QR code in terminal"""
-    local_ip = get_local_ip()
+    """Prints a stylish banner with pairing URL(s) and QR code in terminal"""
+    local_ips = get_all_local_ips()
     local_url = f"http://localhost:{port}"
-    network_url = f"http://{local_ip}:{port}"
+    network_urls = [f"http://{ip}:{port}" for ip in local_ips]
 
     print("=" * 65)
     print("  ASSETTO CORSA GPS MINIMAP SERVER")
     print("=" * 65)
     print(f"  Local URL : {local_url}")
-    print(f"  Phone / Tablet URL : {network_url}")
+    if len(network_urls) == 1:
+        print(f"  Phone / Tablet URL : {network_urls[0]}")
+    else:
+        print("  Phone / Tablet URLs (pick the one on your device's network):")
+        for url in network_urls:
+            print(f"    {url}")
     print("-" * 65)
     print("  Open on your mobile browser / tablet:")
+    qr_url = network_urls[0]
     try:
         import qrcode
 
         qr = qrcode.QRCode(box_size=1, border=2)
-        qr.add_data(network_url)
+        qr.add_data(qr_url)
         qr.make(fit=True)
         qr.print_ascii(invert=True)
     except Exception:
-        print(f"  [QR Code Generator: open {network_url} in mobile browser]")
+        print(f"  [QR Code Generator: open {qr_url} in mobile browser]")
     print("=" * 65)
     print("  Press [Ctrl + R] or [R] in this terminal to reset the session!")
     print("  Telemetry engine running... Ready for connections!\n")
