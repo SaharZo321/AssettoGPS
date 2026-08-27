@@ -18,3 +18,9 @@ package = false
 build = [
     "pyinstaller>=6.11,<7",
 ]
+test = [
+    "pytest>=8.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
