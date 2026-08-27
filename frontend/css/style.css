@@ -98,22 +98,6 @@
   }
 }
 
-#navigation-map .maplibregl-ctrl-bottom-right {
-  right: 10px;
-  bottom: 82px;
-  z-index: 6;
-}
-
-#navigation-map .maplibregl-ctrl-attrib {
-  border-radius: 7px;
-  background: rgba(8, 13, 22, 0.78);
-  color: #cbd5e1;
-}
-
-#navigation-map .maplibregl-ctrl-attrib a {
-  color: #7dd3fc;
-}
-
 .navigation-map-state {
   position: absolute;
   inset: 0;
@@ -1176,6 +1160,25 @@
 
 .copy-url-btn:active {
   transform: scale(0.9);
+}
+
+/* Data Credits Footer */
+.settings-credits {
+  border-top: 1px solid var(--bg-card-border);
+  padding-top: 12px;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.settings-credits a {
+  color: var(--accent-cyan);
+  text-decoration: none;
+}
+
+.settings-credits a:hover {
+  text-decoration: underline;
 }
 
 /* Toast Notifications */
