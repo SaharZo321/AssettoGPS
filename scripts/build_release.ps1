@@ -45,13 +45,13 @@ try {
         Copy-Item -LiteralPath (Join-Path $repoRoot "frontend\$file") -Destination $frontendRuntime -Force
     }
 
-    uv sync --group build --locked
+    uv sync --group build --group test --locked
     if ($LASTEXITCODE -ne 0) {
         throw "Dependency synchronization failed."
     }
 
     if (-not $SkipTests) {
-        uv run --group build python -m unittest discover -s tests -v
+        uv run --group build --group test pytest
         if ($LASTEXITCODE -ne 0) {
             throw "Unit tests failed."
         }

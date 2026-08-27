@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 from typing import Set, Dict, Any, Optional, Callable
 
+import psutil
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -168,28 +169,41 @@ def get_local_ip() -> str:
     return ip
 
 
-def print_startup_banner(port: int = 8080):
-    """Prints a stylish banner with pairing URL and QR code in terminal"""
-    local_ip = get_local_ip()
+def get_all_local_ips() -> list:
+    """Finds every IPv4 address bound to a local interface (LAN, VPN, etc).
+
+    Resolving the machine's hostname only reports whatever the OS/DNS
+    considers primary, which can be a VPN adapter instead of the LAN, so
+    this walks the actual interface list via psutil instead.
+    """
+    ips = set()
+    for addrs in psutil.net_if_addrs().values():
+        for addr in addrs:
+            if addr.family == socket.AF_INET and not addr.address.startswith("127."):
+                ips.add(addr.address)
+    return sorted(ips) or [get_local_ip()]
+
+
+def print_startup_banner(host: str, port: int = 8080):
+    """Prints a startup banner with the local and network pairing URLs"""
     local_url = f"http://localhost:{port}"
-    network_url = f"http://{local_ip}:{port}"
 
     print("=" * 65)
     print("  ASSETTO CORSA GPS MINIMAP SERVER")
     print("=" * 65)
     print(f"  Local URL : {local_url}")
-    print(f"  Phone / Tablet URL : {network_url}")
-    print("-" * 65)
-    print("  Open on your mobile browser / tablet:")
-    try:
-        import qrcode
-
-        qr = qrcode.QRCode(box_size=1, border=2)
-        qr.add_data(network_url)
-        qr.make(fit=True)
-        qr.print_ascii(invert=True)
-    except Exception:
-        print(f"  [QR Code Generator: open {network_url} in mobile browser]")
+    if is_loopback_host(host):
+        print("  Only reachable from this machine (--host 127.0.0.1).")
+        print("  Pass --host 0.0.0.0 to allow phone/tablet pairing over your network.")
+    else:
+        local_ips = get_all_local_ips() if host == "0.0.0.0" else [host]
+        network_urls = [f"http://{ip}:{port}" for ip in local_ips]
+        if len(network_urls) == 1:
+            print(f"  Phone / Tablet URL : {network_urls[0]}")
+        else:
+            print("  Phone / Tablet URLs (pick the one on your device's network):")
+            for url in network_urls:
+                print(f"    {url}")
     print("=" * 65)
     print("  Press [Ctrl + R] or [R] in this terminal to reset the session!")
     print("  Telemetry engine running... Ready for connections!\n")
@@ -374,7 +388,7 @@ if FRONTEND_DIR.exists():
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="AssettoGPS local telemetry server")
-    parser.add_argument("--host", default=os.environ.get("HOST", "0.0.0.0"))
+    parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8080")))
     return parser.parse_args(argv)
 
@@ -383,7 +397,7 @@ def main(argv=None):
     global uvicorn_server
 
     args = parse_args(argv)
-    print_startup_banner(args.port)
+    print_startup_banner(args.host, args.port)
     shutdown_event.clear()
     config = uvicorn.Config(
         app,

@@ -127,7 +127,7 @@ For frontend development, keep the compiler running in a second terminal:
 Run the tests:
 
     pnpm run check
-    uv run python -m unittest discover -s tests -v
+    uv run --group test pytest
     uv run python scripts/verify_srp_routing.py
 
 Build and test the drag-and-drop Content Manager ZIP on Windows:
