@@ -134,9 +134,10 @@ Build and test the drag-and-drop Content Manager ZIP on Windows:
 
     ./scripts/build_release.ps1
 
-The output is build/AssettoGPS-0.2.0-beta.16.zip. The build script is only for
-project maintainers; players install the resulting ZIP directly through Content
-Manager.
+The output is build/AssettoGPS-\<version\>.zip, where \<version\> is the current
+version from package.json (kept in sync across files by
+scripts/bump_version.py). The build script is only for project maintainers;
+players install the resulting ZIP directly through Content Manager.
 
 ## Verification notes
 
@@ -159,8 +160,6 @@ without a Linux test machine and are explicitly marked untested.
 
 - Complete the manual Windows in-game test.
 - Obtain at least one Linux/Proton beta-tester report.
-- Select the public author name and an open-source or redistribution license.
 - Replace this beta version only after those checks are complete.
 
-No redistribution license has been selected yet. Add a LICENSE file before
-publishing the project publicly.
+Licensed under the [MIT License](LICENSE).
