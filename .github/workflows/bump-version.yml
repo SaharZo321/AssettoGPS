@@ -10,11 +10,11 @@ on:
 
 permissions:
   contents: write
-  actions: write
+  pull-requests: write
 
 jobs:
   bump:
-    name: Bump version and tag
+    name: Bump version and open PR
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -36,23 +36,30 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: python3 scripts/bump_version.py "$VERSION"
 
-      - name: Commit and tag
+      - name: Commit on a release branch
         env:
           VERSION: ${{ inputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "bump-version/v$VERSION"
           git add package.json pyproject.toml ac_app/lua/AssettoGPS/manifest.ini scripts/build_release.ps1
           git commit -m "Bump version to v$VERSION"
-          git tag "v$VERSION"
-          git push origin HEAD:main
-          git push origin "v$VERSION"
+          git push origin "bump-version/v$VERSION"
 
-      - name: Trigger CI build for the release commit
+      - name: Open PR and enable auto-merge
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
         run: |
-          # A push made with the default GITHUB_TOKEN doesn't trigger other
-          # workflows (recursion guard), so kick off CI explicitly. It's
-          # exempt from that guard because it's a workflow_dispatch call.
-          gh workflow run ci.yml --ref main
+          # main requires PRs + status checks, so we can't push straight to
+          # it anymore. Open a PR and let GitHub auto-merge it once the two
+          # required checks (which also run on pull_request) pass. The
+          # tag-release workflow tags the resulting merge commit and kicks
+          # off the Windows build/release.
+          gh pr create \
+            --base main \
+            --head "bump-version/v$VERSION" \
+            --title "Bump version to v$VERSION" \
+            --body "Automated version bump to v$VERSION. Auto-merges once required checks pass; merging tags the release and triggers the Windows build/publish."
+          gh pr merge "bump-version/v$VERSION" --auto --squash

@@ -1,0 +1,46 @@
+name: Tag Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  tag:
+    name: Tag merged version bump
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.user.login == 'github-actions[bot]' &&
+      startsWith(github.event.pull_request.head.ref, 'bump-version/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository at the merge commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - name: Tag and push
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          tag="${HEAD_REF#bump-version/}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$tag"
+          git push origin "$tag"
+
+      - name: Trigger CI build for the release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # ci.yml only watches `push` on branches (not tags), so the tag
+          # push above won't build/publish on its own - kick it off
+          # explicitly, same as the old direct-push flow did.
+          gh workflow run ci.yml --ref main
