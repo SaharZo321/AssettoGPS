@@ -22,8 +22,9 @@ PACKAGE_JSON = REPO_ROOT / "package.json"
 PYPROJECT_TOML = REPO_ROOT / "pyproject.toml"
 MANIFEST_INI = REPO_ROOT / "ac_app" / "lua" / "AssettoGPS" / "manifest.ini"
 BUILD_RELEASE_PS1 = REPO_ROOT / "scripts" / "build_release.ps1"
+UV_LOCK = REPO_ROOT / "uv.lock"
 
-TRACKED_FILES = (PACKAGE_JSON, PYPROJECT_TOML, MANIFEST_INI, BUILD_RELEASE_PS1)
+TRACKED_FILES = (PACKAGE_JSON, PYPROJECT_TOML, MANIFEST_INI, BUILD_RELEASE_PS1, UV_LOCK)
 
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(-(alpha|beta|rc)\.\d+)?$")
 
@@ -130,6 +131,12 @@ def bump(version: str, make_commit: bool = True) -> None:
     write_version(MANIFEST_INI, FILE_PATTERNS[MANIFEST_INI], version)
     write_version(BUILD_RELEASE_PS1, FILE_PATTERNS[BUILD_RELEASE_PS1], version)
     write_pyproject_version(version)
+
+    # pyproject.toml's version is mirrored into uv.lock; `uv sync --locked` in CI
+    # fails if the two drift, so keep the lockfile in sync here too.
+    result = subprocess.run(["uv", "lock"], cwd=REPO_ROOT, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise SystemExit(f"uv lock failed:\n{result.stdout}{result.stderr}".rstrip())
 
     print(f"Bumped version to {version} (pyproject.toml: {to_pep440(version)})")
 
