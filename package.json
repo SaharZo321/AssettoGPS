@@ -1,15 +1,15 @@
 {
   "name": "assetto-minimap",
-  "version": "0.2.0-beta.16",
+  "version": "0.1.0",
   "private": true,
   "description": "Frontend build tooling for AssettoGPS",
   "packageManager": "pnpm@11.22.0",
   "scripts": {
-    "build": "node scripts/clean_frontend.mjs && tsc --project tsconfig.json && node scripts/copy_frontend_vendor.mjs",
-    "check": "tsc --project tsconfig.json --noEmit",
+    "build": "node scripts/generate_frontend_version.mjs && node scripts/clean_frontend.mjs && tsc --project tsconfig.json && node scripts/copy_frontend_vendor.mjs",
+    "check": "node scripts/generate_frontend_version.mjs && tsc --project tsconfig.json --noEmit",
     "clean:frontend": "node scripts/clean_frontend.mjs",
     "vendor:frontend": "node scripts/copy_frontend_vendor.mjs",
-    "watch:frontend": "node scripts/copy_frontend_vendor.mjs && tsc --project tsconfig.json --watch --preserveWatchOutput"
+    "watch:frontend": "node scripts/generate_frontend_version.mjs && node scripts/copy_frontend_vendor.mjs && tsc --project tsconfig.json --watch --preserveWatchOutput"
   },
   "engines": {
     "node": ">=22.13"

@@ -96,4 +96,6 @@ interface Window {
   navUI: NavigationUI;
   NavigationController: typeof NavigationController;
   app: App;
+  appVersion: string;
+  appCommit: string;
 }

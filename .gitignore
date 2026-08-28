@@ -47,6 +47,7 @@ scratch/
 node_modules/
 frontend/js/
 frontend/vendor/maplibre-gl/
+frontend/src/version.ts
 *.tsbuildinfo
 
 # Local WSL dev helper
