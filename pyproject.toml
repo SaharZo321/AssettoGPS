@@ -3,6 +3,8 @@ name = "assetto-minimap"
 version = "0.1.0"
 description = "Waze/GPS Minimap and Telemetry companion for Assetto Corsa & Shutoko Revival Project"
 readme = "README.md"
+license = "MIT"
+authors = [{ name = "Sahar Zolberg" }]
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.110.0",
