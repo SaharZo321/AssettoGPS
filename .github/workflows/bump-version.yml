@@ -1,0 +1,48 @@
+name: Bump Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "New version, e.g. 0.1.0 or 0.1.1-beta.2"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    name: Bump version and tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate version format
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
+            echo "::error::Version '$VERSION' doesn't look like X.Y.Z or X.Y.Z-beta.N / -alpha.N / -rc.N" >&2
+            exit 1
+          fi
+
+      - name: Bump version in tracked files
+        env:
+          VERSION: ${{ inputs.version }}
+        run: python3 scripts/bump_version.py "$VERSION"
+
+      - name: Commit and tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json pyproject.toml ac_app/lua/AssettoGPS/manifest.ini scripts/build_release.ps1
+          git commit -m "Bump version to v$VERSION"
+          git tag "v$VERSION"
+          git push origin HEAD:main
+          git push origin "v$VERSION"
