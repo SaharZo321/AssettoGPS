@@ -25,6 +25,7 @@ class App {
     this.audio = window.audioAlerts;
 
     this.setupEventListeners();
+    this.renderVersionInfo();
     this.renderer.readyPromise
       .then(() => this.updateNavigationUi())
       .catch((error: unknown) => {
@@ -116,6 +117,12 @@ class App {
       badge.classList.add("status-disconnected");
       text.innerText = "Server not running";
     }
+  }
+
+  renderVersionInfo(): void {
+    const el = document.getElementById("settings-version");
+    if (!el) return;
+    el.textContent = `v${window.appVersion} (${window.appCommit})`;
   }
 
   updateServerOfflineNotice(visible: boolean): void {
