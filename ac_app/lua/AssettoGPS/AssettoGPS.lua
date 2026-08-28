@@ -109,7 +109,7 @@ local function startServer()
   launch_in_progress = true
   os.runConsoleProcess({
     filename = server_executable,
-    arguments = {"--port", tostring(server_port)},
+    arguments = {"--port", tostring(server_port), "--host", "0.0.0.0"},
     workingDirectory = server_dir,
     assignJob = true
   }, function(err, data)
