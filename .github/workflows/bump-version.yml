@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   bump:
@@ -46,3 +47,12 @@ jobs:
           git tag "v$VERSION"
           git push origin HEAD:main
           git push origin "v$VERSION"
+
+      - name: Trigger CI build for the release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A push made with the default GITHUB_TOKEN doesn't trigger other
+          # workflows (recursion guard), so kick off CI explicitly. It's
+          # exempt from that guard because it's a workflow_dispatch call.
+          gh workflow run ci.yml --ref main
