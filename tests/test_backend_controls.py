@@ -24,6 +24,7 @@ import ac_shared_memory
 import ac_track_finder
 import mock_telemetry
 import server
+import tls
 import verify_srp_routing
 
 
@@ -118,6 +119,16 @@ def test_custom_port_argument():
     assert args.port == 9123
 
 
+def test_https_port_and_https_only_arguments():
+    args = server.parse_args(["--host", "0.0.0.0", "--https-port", "9443"])
+    assert args.https_port == 9443
+    assert args.https_only is False
+
+    args = server.parse_args(["--https-only"])
+    assert args.https_only is True
+    assert args.https_port is None
+
+
 def test_public_server_rejects_mock_argument():
     with contextlib.redirect_stderr(io.StringIO()):
         with pytest.raises(SystemExit):
@@ -131,6 +142,47 @@ def test_public_server_has_no_mode_api_or_status():
     assert "mode" not in status
     source = Path(server.__file__).read_text(encoding="utf-8")
     assert "mock_telemetry" not in source
+
+
+def test_build_pairing_urls_loopback_default_has_no_https():
+    assert server.build_pairing_urls("192.168.1.5", 8080, None, False) == (
+        "http://192.168.1.5:8080",
+        None,
+    )
+
+
+def test_build_pairing_urls_dual_mode_has_both():
+    assert server.build_pairing_urls("192.168.1.5", 8080, 8081, False) == (
+        "http://192.168.1.5:8080",
+        "https://192.168.1.5:8081",
+    )
+
+
+def test_build_pairing_urls_https_only_has_no_http():
+    assert server.build_pairing_urls("192.168.1.5", 8080, None, True) == (
+        None,
+        "https://192.168.1.5:8080",
+    )
+
+
+def test_status_pairing_urls_are_none_when_main_never_ran():
+    # get_status() is called directly here (as it is above), without main()
+    # ever setting server_runtime_config - it must degrade gracefully rather
+    # than raising, since real unit tests exercise it this way.
+    assert server.server_runtime_config is None
+    with mock.patch.object(server, "get_local_ip", return_value="127.0.0.1"):
+        status = asyncio.run(server.get_status())
+    assert status["httpUrl"] is None
+    assert status["httpsUrl"] is None
+
+
+def test_status_pairing_urls_reflect_runtime_config():
+    runtime_config = {"port": 8080, "https_port": 8081, "https_only": False}
+    with mock.patch.object(server, "get_local_ip", return_value="192.168.1.5"), \
+            mock.patch.object(server, "server_runtime_config", runtime_config):
+        status = asyncio.run(server.get_status())
+    assert status["httpUrl"] == "http://192.168.1.5:8080"
+    assert status["httpsUrl"] == "https://192.168.1.5:8081"
 
 
 def test_loopback_detection():
@@ -488,6 +540,18 @@ def test_recenter_button_targets_the_active_map_mode():
     assert 'this.orientationMode === "headingUp" ? this.displayBearing : 0' in navigation
 
 
+def test_mobile_screen_wake_lock_is_native_only_and_reacquires():
+    app = (server.FRONTEND_DIR / "src" / "app.ts").read_text(encoding="utf-8")
+    index = (server.FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
+
+    assert 'if (!("wakeLock" in navigator)) return;' in app
+    assert 'document.addEventListener("visibilitychange"' in app
+    assert 'btnFullscreen.addEventListener("click"' in app
+    assert app.count("void this.requestWakeLock();") >= 3
+    assert "media-wake-lock" not in app
+    assert "media-wake-lock" not in index
+
+
 def test_navigation_car_uses_lower_fifth_tracking_position():
     renderer = (server.FRONTEND_DIR / "src" / "navigation-map-renderer.ts").read_text(
         encoding="utf-8"
@@ -541,3 +605,45 @@ def test_navigation_auto_zoom_is_twenty_five_percent_closer():
     assert "const displayJump" in renderer
     assert "this.matcher?.resetContinuity();" in renderer
     assert "this.recenter();" in renderer
+
+
+def test_ensure_self_signed_certificate_generates_and_caches(tmp_path):
+    cert_path, key_path = tls.ensure_self_signed_certificate(
+        ["localhost", "127.0.0.1"], cert_dir=tmp_path
+    )
+    assert cert_path.exists()
+    assert key_path.exists()
+    original_bytes = cert_path.read_bytes()
+
+    # A subset of the already-covered hosts must reuse the cached cert
+    # unchanged, not regenerate it - otherwise every incidental LAN-adapter
+    # change would force every paired phone to re-accept a new certificate.
+    cert_path2, key_path2 = tls.ensure_self_signed_certificate(["localhost"], cert_dir=tmp_path)
+    assert cert_path2 == cert_path
+    assert cert_path2.read_bytes() == original_bytes
+
+
+def test_ensure_self_signed_certificate_regenerates_for_new_host(tmp_path):
+    cert_path, _ = tls.ensure_self_signed_certificate(["localhost"], cert_dir=tmp_path)
+    original_bytes = cert_path.read_bytes()
+
+    cert_path2, _ = tls.ensure_self_signed_certificate(
+        ["localhost", "192.168.1.5"], cert_dir=tmp_path
+    )
+    assert cert_path2.read_bytes() != original_bytes
+
+
+def test_ensure_self_signed_certificate_covers_requested_hosts(tmp_path):
+    from cryptography import x509
+
+    cert_path, _ = tls.ensure_self_signed_certificate(
+        ["localhost", "127.0.0.1", "192.168.1.5"], cert_dir=tmp_path
+    )
+    certificate = x509.load_pem_x509_certificate(cert_path.read_bytes())
+    san = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    dns_names = san.get_values_for_type(x509.DNSName)
+    ip_addresses = [str(ip) for ip in san.get_values_for_type(x509.IPAddress)]
+
+    assert "localhost" in dns_names
+    assert "127.0.0.1" in ip_addresses
+    assert "192.168.1.5" in ip_addresses

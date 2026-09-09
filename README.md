@@ -120,6 +120,24 @@ Start the development server:
 
 Then open http://127.0.0.1:8080.
 
+To pair a phone or tablet against the development server, bind it to the
+network instead of loopback-only:
+
+    uv run backend/dev_server.py --host 0.0.0.0
+
+This serves plain HTTP on `--port` (8080 by default) exactly as before, and
+additionally serves HTTPS with a self-signed, locally-generated certificate on
+`--port + 1` (8081 by default, override with `--https-port`). **Use the
+`https://` URL printed in the startup banner for phone pairing, not the
+`http://` one** - browsers only grant the Screen Wake Lock API (which keeps a
+paired phone's screen from sleeping) on a secure context, and plain HTTP over
+a LAN address never qualifies. The first connection from a new phone/browser
+shows a one-time "connection isn't private" warning - tap **Advanced ->
+Proceed**; this is expected, since the certificate is self-issued for this
+private server and isn't from a public certificate authority. It won't ask
+again on that device after the first time. Windows Firewall needs an inbound
+allow rule for the HTTPS port too, same as the existing one for `--port`.
+
 For frontend development, keep the compiler running in a second terminal:
 
     pnpm run watch:frontend
