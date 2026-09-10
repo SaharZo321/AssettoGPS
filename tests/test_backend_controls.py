@@ -4,6 +4,7 @@ import io
 import json
 import math
 import re
+import socket
 import sys
 import uuid
 from pathlib import Path
@@ -183,6 +184,111 @@ def test_status_pairing_urls_reflect_runtime_config():
         status = asyncio.run(server.get_status())
     assert status["httpUrl"] == "http://192.168.1.5:8080"
     assert status["httpsUrl"] == "https://192.168.1.5:8081"
+
+
+def test_https_setup_failure_falls_back_to_http_only_in_dual_mode(capsys):
+    # Dual mode is the fallback for any --host 0.0.0.0 run that isn't
+    # --https-only (e.g. plain `dev_server.py --host 0.0.0.0`). A broken
+    # cert/cryptography setup (e.g. a PyInstaller bundling gap this repo
+    # can't verify from WSL) must not crash the plain-HTTP listener.
+    original_runtime_config = server.server_runtime_config
+    original_uvicorn_server = server.uvicorn_server
+    original_uvicorn_https_server = server.uvicorn_https_server
+    fake_server = mock.MagicMock()
+    try:
+        with mock.patch.object(tls, "ensure_self_signed_certificate", side_effect=RuntimeError("boom")), \
+                mock.patch.object(server.uvicorn, "Server", return_value=fake_server):
+            server.main(["--host", "0.0.0.0", "--port", "9001"])
+
+        fake_server.run.assert_called_once()
+        assert server.server_runtime_config["https_port"] is None
+        assert server.uvicorn_https_server is None
+        assert "Could not set up HTTPS" in capsys.readouterr().out
+    finally:
+        server.server_runtime_config = original_runtime_config
+        server.uvicorn_server = original_uvicorn_server
+        server.uvicorn_https_server = original_uvicorn_https_server
+
+
+def test_dual_mode_https_port_conflict_falls_back_to_http_only_not_a_crash():
+    # Regression test for a real bug: uvicorn.Server.startup() calls
+    # sys.exit() (not a catchable OSError) when its own bind fails, and with
+    # both listeners sharing one event loop that SystemExit was observed to
+    # propagate out of asyncio.run() and kill the whole process - including
+    # the working plain-HTTP listener - whenever the https_port happened to
+    # already be in use. This occupies a real port (not mocked) to exercise
+    # the actual pre-flight check that now prevents that.
+    blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    blocker.bind(("0.0.0.0", 0))
+    blocker.listen(1)
+    taken_port = blocker.getsockname()[1]
+
+    original_runtime_config = server.server_runtime_config
+    original_uvicorn_server = server.uvicorn_server
+    original_uvicorn_https_server = server.uvicorn_https_server
+    fake_server = mock.MagicMock()
+    try:
+        with mock.patch.object(server.uvicorn, "Server", return_value=fake_server):
+            server.main([
+                "--host", "0.0.0.0", "--port", "9003",
+                "--https-port", str(taken_port),
+            ])
+
+        fake_server.run.assert_called_once()
+        assert server.server_runtime_config["https_port"] is None
+        assert server.uvicorn_https_server is None
+    finally:
+        blocker.close()
+        server.server_runtime_config = original_runtime_config
+        server.uvicorn_server = original_uvicorn_server
+        server.uvicorn_https_server = original_uvicorn_https_server
+
+
+def test_https_only_setup_failure_falls_back_to_plain_http_on_same_port():
+    # --https-only is what the packaged in-game launcher uses for the actual
+    # release. A broken cert setup must not take the whole app down - it
+    # falls back to plain HTTP on the same --port instead, same as dual mode.
+    original_runtime_config = server.server_runtime_config
+    original_uvicorn_server = server.uvicorn_server
+    original_uvicorn_https_server = server.uvicorn_https_server
+    fake_server = mock.MagicMock()
+    try:
+        with mock.patch.object(tls, "ensure_self_signed_certificate", side_effect=RuntimeError("boom")), \
+                mock.patch.object(server.uvicorn, "Server", return_value=fake_server):
+            server.main(["--host", "0.0.0.0", "--port", "9002", "--https-only"])
+
+        fake_server.run.assert_called_once()
+        assert server.server_runtime_config["https_only"] is False
+        assert server.server_runtime_config["https_port"] is None
+    finally:
+        server.server_runtime_config = original_runtime_config
+        server.uvicorn_server = original_uvicorn_server
+        server.uvicorn_https_server = original_uvicorn_https_server
+
+
+def test_https_only_port_conflict_falls_back_to_plain_http():
+    blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    blocker.bind(("127.0.0.1", 0))
+    blocker.listen(1)
+    taken_port = blocker.getsockname()[1]
+
+    original_runtime_config = server.server_runtime_config
+    original_uvicorn_server = server.uvicorn_server
+    original_uvicorn_https_server = server.uvicorn_https_server
+    fake_server = mock.MagicMock()
+    try:
+        with mock.patch.object(server.uvicorn, "Server", return_value=fake_server):
+            server.main(["--host", "127.0.0.1", "--port", str(taken_port), "--https-only"])
+
+        fake_server.run.assert_called_once()
+        assert server.server_runtime_config["https_only"] is False
+    finally:
+        blocker.close()
+        server.server_runtime_config = original_runtime_config
+        server.uvicorn_server = original_uvicorn_server
+        server.uvicorn_https_server = original_uvicorn_https_server
 
 
 def test_loopback_detection():

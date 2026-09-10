@@ -42,7 +42,16 @@ Open the Assetto GPS app in-game and wait for its status to show **ONLINE**.
 Open the displayed URL on another device connected to the same local network.
 The default address is:
 
-    http://<your-PC-address>:8080
+    https://<your-PC-address>:8080
+
+The connection is HTTPS with a self-signed, locally-generated certificate -
+browsers only grant the Screen Wake Lock API (which keeps a paired phone's
+screen from sleeping while navigating) on a secure connection, and plain HTTP
+over a LAN address never qualifies. The first connection from a new
+phone/browser shows a one-time "connection isn't private" warning - tap
+**Advanced -> Proceed**; this is expected, since the certificate is
+self-issued for this private server rather than from a public certificate
+authority. It won't ask again on that device after the first time.
 
 Auto theme uses CSP's live ambient-light and track-occlusion data, so it reacts
 to daylight, night, and genuinely dark covered areas without relying on the

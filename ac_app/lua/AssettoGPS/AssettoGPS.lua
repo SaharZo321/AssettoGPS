@@ -15,6 +15,13 @@ end
 local port_input = tostring(server_port)
 local port_error = nil
 local local_ip = "127.0.0.1"
+-- Populated from /api/status's "httpsUrl" when the server has an HTTPS
+-- listener up; nil when it doesn't (loopback, or HTTPS setup failed and the
+-- server fell back to HTTP-only). Phones need the https:// URL for the
+-- browser's Screen Wake Lock API (keeps the screen from sleeping) to work -
+-- that API requires a secure context, which plain HTTP over a LAN address
+-- never satisfies.
+local local_https_url = nil
 local server_running = false
 local launch_in_progress = false
 local launch_error = nil
@@ -75,7 +82,7 @@ end
 
 -- Asynchronously ping local server status
 local function checkServerStatus(callback)
-  web.get("http://127.0.0.1:" .. server_port .. "/api/status", function(err, response)
+  web.get("https://127.0.0.1:" .. server_port .. "/api/status", function(err, response)
     if not err and response and response.status == 200 then
       if not manually_stopped then
         server_running = true
@@ -85,6 +92,11 @@ local function checkServerStatus(callback)
         if ip and #ip > 6 then
           local_ip = ip
         end
+        -- Reset (not just "update if present") so a server that falls back to
+        -- HTTP-only after a restart doesn't leave a stale, dead https:// URL
+        -- displayed to the player.
+        local https_url = response.body:match('"httpsUrl"%s*:%s*"([^"]+)"')
+        local_https_url = (https_url and #https_url > 0) and https_url or nil
       end
       if callback then callback(true) end
     else
@@ -109,7 +121,7 @@ local function startServer()
   launch_in_progress = true
   os.runConsoleProcess({
     filename = server_executable,
-    arguments = {"--port", tostring(server_port), "--host", "0.0.0.0"},
+    arguments = {"--port", tostring(server_port), "--host", "0.0.0.0", "--https-only"},
     workingDirectory = server_dir,
     assignJob = true
   }, function(err, data)
@@ -129,7 +141,7 @@ end
 local function stopServer()
   manually_stopped = true
   server_running = false
-  web.post("http://127.0.0.1:" .. server_port .. "/api/shutdown",
+  web.post("https://127.0.0.1:" .. server_port .. "/api/shutdown",
     control_headers, "", function(err, response)
     server_running = false
   end)
@@ -194,7 +206,7 @@ function windowMain(dt)
   end
 
   -- Phone URL & Copy Button
-  local phone_url = "http://" .. local_ip .. ":" .. server_port
+  local phone_url = local_https_url or ("http://" .. local_ip .. ":" .. server_port)
   ui.text("Phone URL:")
   ui.sameLine()
   ui.textColored(phone_url, rgbm(0.22, 0.74, 0.97, 1.0))
@@ -246,7 +258,7 @@ function script.update(dt)
           light_suggestion,
           ambient_occlusion
         )
-      web.post("http://127.0.0.1:" .. server_port .. "/api/environment",
+      web.post("https://127.0.0.1:" .. server_port .. "/api/environment",
         control_headers, body, function(err, response) end)
     end
   end

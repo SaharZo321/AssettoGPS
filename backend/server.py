@@ -488,34 +488,81 @@ async def _serve_both(primary: uvicorn.Server, secondary: uvicorn.Server) -> Non
     await asyncio.gather(*tasks)
 
 
+def _port_is_available(host: str, port: int) -> bool:
+    """Best-effort check for whether a bind would succeed.
+
+    uvicorn.Server.startup() calls sys.exit() (not a catchable OSError) when
+    its own bind_socket() fails - e.g. the port is already in use. Under
+    _serve_both(), both listeners share one event loop, so a SystemExit
+    raised inside the HTTPS task's coroutine propagates out of the whole
+    asyncio.run() call and kills the primary HTTP listener too (verified: a
+    conflicting port + real dual-mode run exits the whole process with code
+    3). Checking with a plain socket first - and never constructing the
+    HTTPS Server/task at all if it fails - avoids ever reaching uvicorn's
+    sys.exit() path. There's a small unavoidable TOCTOU race against
+    whatever binds the port between this check and the real one, but that's
+    strictly better than today's unconditional crash-on-conflict.
+    """
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    probe = socket.socket(family, socket.SOCK_STREAM)
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        probe.bind((host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
 def main(argv=None):
     global uvicorn_server, uvicorn_https_server, server_runtime_config, _startup_started
 
     args = parse_args(argv)
     loopback = is_loopback_host(args.host)
     dual_mode = not args.https_only and not loopback
+    https_only = args.https_only
 
     https_port = None
     if dual_mode:
         https_port = args.https_port if args.https_port is not None else args.port + 1
 
+    cert_path = key_path = None
+    if https_only or dual_mode:
+        # https-only binds the one HTTPS listener on --port; dual mode binds
+        # it on the separate https_port alongside the unchanged HTTP listener.
+        bind_port = args.port if https_only else https_port
+        ips = get_all_local_ips() if args.host == "0.0.0.0" else [args.host]
+        hosts = sorted({"localhost", "127.0.0.1", *ips})
+        try:
+            cert_path, key_path = tls.ensure_self_signed_certificate(hosts)
+            if not _port_is_available(args.host, bind_port):
+                raise OSError(f"port {bind_port} is already in use")
+        except Exception as e:
+            # --https-only is what the packaged in-game launcher will use for
+            # the actual release, and dual mode is today's fallback for any
+            # --host 0.0.0.0 run (e.g. the launcher before that lands). Either
+            # way, a broken HTTPS setup - missing/broken `cryptography`
+            # bundling this repo can't verify from WSL, no write access to
+            # the cert cache dir, a port conflict, etc. - must never take the
+            # whole app down: a working app that can't keep the phone's
+            # screen awake beats a completely broken one.
+            print(f"[!] Could not set up HTTPS ({e}); continuing with HTTP only.")
+            dual_mode = False
+            https_only = False
+            https_port = None
+
     server_runtime_config = {
         "port": args.port,
         "https_port": https_port,
-        "https_only": args.https_only,
+        "https_only": https_only,
     }
 
-    print_startup_banner(args.host, args.port, https_port, args.https_only)
+    print_startup_banner(args.host, args.port, https_port, https_only)
     shutdown_event.clear()
     _startup_started = False
 
-    cert_path = key_path = None
-    if args.https_only or dual_mode:
-        ips = get_all_local_ips() if args.host == "0.0.0.0" else [args.host]
-        hosts = sorted({"localhost", "127.0.0.1", *ips})
-        cert_path, key_path = tls.ensure_self_signed_certificate(hosts)
-
-    if args.https_only:
+    if https_only:
         config = uvicorn.Config(
             app,
             host=args.host,
