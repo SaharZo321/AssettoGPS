@@ -1,6 +1,6 @@
 {
   "name": "assetto-minimap",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Frontend build tooling for AssettoGPS",
   "license": "MIT",
