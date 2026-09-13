@@ -105,7 +105,7 @@ class NavigationEngine:
                         "id": poi["id"],
                         "name": poi["name"],
                         "shortName": poi["shortName"],
-                        "icon": poi.get("icon", "📍"),
+                        "icon": poi.get("icon", "pin"),
                         "distanceM": int(dist),
                         "distanceKm": round(dist / 1000.0, 1),
                         "type": poi.get("type", "landmark"),
@@ -122,7 +122,7 @@ class NavigationEngine:
             nav_instruction = {
                 "title": tunnel_name,
                 "subtitle": "Tunnel Mode Active" if not nearby_poi else f"Approaching {nearby_poi['shortName']}",
-                "icon": "🚇",
+                "icon": "tunnel",
                 "alertLevel": "tunnel",
             }
         elif nearby_poi and nearby_poi["distanceM"] < 1500:
@@ -142,7 +142,7 @@ class NavigationEngine:
                 nav_instruction = {
                     "title": "Shutoko Expressway",
                     "subtitle": clean_car if clean_car else "Live Navigation Active",
-                    "icon": "🛣️",
+                    "icon": "road",
                     "alertLevel": "normal",
                 }
             elif track_name:
@@ -150,14 +150,14 @@ class NavigationEngine:
                 nav_instruction = {
                     "title": f"{clean_track}",
                     "subtitle": clean_car if clean_car else "Live AC Session",
-                    "icon": "🏁",
+                    "icon": "finish",
                     "alertLevel": "normal",
                 }
             else:
                 nav_instruction = {
                     "title": "Assetto Corsa GPS",
                     "subtitle": "Live Navigation Active",
-                    "icon": "🏁",
+                    "icon": "finish",
                     "alertLevel": "normal",
                 }
 
