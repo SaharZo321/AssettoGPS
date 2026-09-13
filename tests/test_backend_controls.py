@@ -203,7 +203,7 @@ def test_https_setup_failure_falls_back_to_http_only_in_dual_mode(capsys):
         fake_server.run.assert_called_once()
         assert server.server_runtime_config["https_port"] is None
         assert server.uvicorn_https_server is None
-        assert "Could not set up HTTPS" in capsys.readouterr().out
+        assert "Could not set up HTTPS" in capsys.readouterr().err
     finally:
         server.server_runtime_config = original_runtime_config
         server.uvicorn_server = original_uvicorn_server

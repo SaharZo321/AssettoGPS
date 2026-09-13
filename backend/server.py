@@ -542,7 +542,7 @@ def main(argv=None):
             # Preserve HTTP control if certificate setup or the HTTPS port
             # fails. The packaged launcher uses dual mode and reports this
             # fallback to the user; release smoke tests require HTTPS to work.
-            print(f"[!] Could not set up HTTPS ({e}); continuing with HTTP only.")
+            print(f"[!] Could not set up HTTPS ({e}); continuing with HTTP only.", file=sys.stderr, flush=True)
             dual_mode = False
             https_only = False
             https_port = None
