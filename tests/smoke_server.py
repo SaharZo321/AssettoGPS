@@ -2,9 +2,11 @@
 
 import argparse
 import asyncio
+import contextlib
 import json
 from pathlib import Path
 import re
+import secrets
 import socket
 import ssl
 import subprocess
@@ -64,13 +66,15 @@ def launcher_arguments(lua_path: Path, port: int):
 
 
 def unused_port_pair():
+    # Avoid ephemeral ports: Windows can assign port+1 to the test's own
+    # outgoing readiness probe while the executable is still unpacking.
     for _ in range(100):
-        port = unused_port()
-        if port == 65535:
-            continue
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        port = 10000 + secrets.randbelow(20000)
+        with contextlib.ExitStack() as stack:
             try:
-                sock.bind(("0.0.0.0", port + 1))
+                for candidate in (port, port + 1):
+                    sock = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
+                    sock.bind(("0.0.0.0", candidate))
             except OSError:
                 continue
         return port
