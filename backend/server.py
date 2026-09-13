@@ -551,6 +551,14 @@ def main(argv=None):
             cert_path, key_path = tls.ensure_self_signed_certificate(hosts)
             if not _port_is_available(args.host, bind_port):
                 raise OSError(f"port {bind_port} is already in use")
+            https_config = uvicorn.Config(
+                app, host=args.host, port=bind_port,
+                ssl_certfile=str(cert_path), ssl_keyfile=str(key_path),
+                log_level="warning",
+            )
+            # Load TLS before starting either listener, inside the fallback
+            # handler. Uvicorn otherwise defers this until Server.serve().
+            https_config.load()
         except Exception as e:
             # Preserve service over HTTP if certificate setup or the HTTPS
             # port fails. The launcher detects and reports this fallback;
@@ -572,15 +580,7 @@ def main(argv=None):
     _startup_started = False
 
     if https_only:
-        config = uvicorn.Config(
-            app,
-            host=args.host,
-            port=args.port,
-            ssl_certfile=str(cert_path),
-            ssl_keyfile=str(key_path),
-            log_level="warning",
-        )
-        uvicorn_server = uvicorn.Server(config)
+        uvicorn_server = uvicorn.Server(https_config)
         try:
             uvicorn_server.run()
         finally:
@@ -593,14 +593,6 @@ def main(argv=None):
     uvicorn_server = uvicorn.Server(http_config)
 
     if dual_mode:
-        https_config = uvicorn.Config(
-            app,
-            host=args.host,
-            port=https_port,
-            ssl_certfile=str(cert_path),
-            ssl_keyfile=str(key_path),
-            log_level="warning",
-        )
         uvicorn_https_server = uvicorn.Server(https_config)
 
     try:

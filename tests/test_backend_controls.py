@@ -5,6 +5,7 @@ import json
 import math
 import re
 import socket
+import ssl
 import sys
 import uuid
 from pathlib import Path
@@ -308,14 +309,14 @@ def test_packaged_control_port_stays_loopback_and_preserves_phone_port(monkeypat
     monkeypatch.setattr(server, "_serve_both", serve)
     server.main(["--host", "0.0.0.0", "--port", "9000", "--control-port", "9001"])
     configs = [call.kwargs for call in config.call_args_list]
-    assert configs[0]["host"] == "127.0.0.1" and configs[0]["port"] == 9001
+    assert configs[-1]["host"] == "127.0.0.1" and configs[-1]["port"] == 9001
     status = asyncio.run(server.get_status())
     assert status["httpUrl"] is None
     if tls_failure:
         assert len(configs) == 1 and status["httpsUrl"] is None
         serve.assert_not_called()
     else:
-        assert configs[1]["host"] == "0.0.0.0" and configs[1]["port"] == 9000
+        assert configs[0]["host"] == "0.0.0.0" and configs[0]["port"] == 9000
         assert status["httpsUrl"] == "https://192.168.1.20:9000"
         serve.assert_awaited_once()
 
@@ -325,6 +326,30 @@ def test_loopback_detection():
     assert server.is_loopback_host("::1")
     assert not server.is_loopback_host("192.168.1.20")
     assert not server.is_loopback_host("not-an-address")
+
+
+def test_tls_load_failure_preserves_packaged_http_controls(monkeypatch, tmp_path, capsys):
+    cert, key = tls.ensure_self_signed_certificate(["localhost"], cert_dir=tmp_path)
+    key.write_bytes(b"")
+    # Simulate damage after the certificate helper returned: use real Uvicorn
+    # configuration loading, but do not bind sockets or start the HTTP loop.
+    monkeypatch.setattr(tls, "ensure_self_signed_certificate", lambda hosts: (cert, key))
+    monkeypatch.setattr(server, "_port_is_available", lambda host, port: True)
+    monkeypatch.setattr(server, "server_runtime_config", None)
+    listener = mock.Mock()
+    factory = mock.Mock(return_value=listener)
+    monkeypatch.setattr(server.uvicorn, "Server", factory)
+    serve = mock.AsyncMock()
+    monkeypatch.setattr(server, "_serve_both", serve)
+    server.main(["--host", "0.0.0.0", "--port", "9000", "--control-port", "9001"])
+    factory.assert_called_once()
+    config = factory.call_args.args[0]
+    assert (config.host, config.port) == ("127.0.0.1", 9001)
+    listener.run.assert_called_once()
+    serve.assert_not_called()
+    status = asyncio.run(server.get_status())
+    assert status["httpsUrl"] is None and status["httpUrl"] is None
+    assert "continuing with HTTP only" in capsys.readouterr().err
 
 
 def test_control_requires_loopback_and_header():
@@ -766,6 +791,29 @@ def test_ensure_self_signed_certificate_regenerates_for_new_host(tmp_path):
         ["localhost", "192.168.1.5"], cert_dir=tmp_path
     )
     assert cert_path2.read_bytes() != original_bytes
+
+
+@pytest.mark.parametrize("damage", ["empty_key", "empty_cert", "mismatched_key", "metadata_array", "metadata_hosts"])
+def test_certificate_cache_recovers_from_damage(tmp_path, damage):
+    cert, key = tls.ensure_self_signed_certificate(["localhost"], cert_dir=tmp_path)
+    original = cert.read_bytes()
+    if damage == "empty_key":
+        key.write_bytes(b"")
+    elif damage == "empty_cert":
+        cert.write_bytes(b"")
+    elif damage == "mismatched_key":
+        _, other_key = tls.ensure_self_signed_certificate(["localhost"], cert_dir=tmp_path / "other")
+        key.write_bytes(other_key.read_bytes())
+    elif damage == "metadata_array":
+        (tmp_path / "meta.json").write_text("[]", encoding="utf-8")
+    else:
+        (tmp_path / "meta.json").write_text('{"hosts": [null]}', encoding="utf-8")
+    repaired_cert, repaired_key = tls.ensure_self_signed_certificate(["localhost"], cert_dir=tmp_path)
+    assert repaired_cert.read_bytes() != original
+    ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(repaired_cert, repaired_key)
+    repaired = repaired_cert.read_bytes()
+    tls.ensure_self_signed_certificate(["localhost"], cert_dir=tmp_path)
+    assert repaired_cert.read_bytes() == repaired
 
 
 def test_ensure_self_signed_certificate_covers_requested_hosts(tmp_path):

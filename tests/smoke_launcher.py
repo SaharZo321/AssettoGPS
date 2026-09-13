@@ -92,6 +92,19 @@ def main():
     app.clicked = "Copy URL"
     app.draw()
     assert app.copied == "https://192.168.1.20:8080"
+    # A live process with failed heartbeats is a connection error, not startup.
+    app.alive = False
+    app.now = 41
+    app.script.update(0.1)
+    assert "ERROR" in app.draw() and "Lost connection" in app.draw()
+    assert "STARTING" not in app.draw() and "https://" not in app.draw()
+    app.now = 131
+    app.script.update(0.1)
+    assert "ERROR" in app.draw() and "Lost connection" in app.draw()
+    app.alive = True
+    app.now = 136
+    app.script.update(0.1)
+    assert "ONLINE" in app.draw() and "Lost connection" not in app.draw()
     app.clicked = "Stop Server"
     app.draw()
     assert list(app.requests.values())[-1] == "http://127.0.0.1:8081/api/shutdown"

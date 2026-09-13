@@ -11,6 +11,7 @@ treats the origin as secure.
 
 import ipaddress
 import json
+import ssl
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -28,7 +29,8 @@ def _paths(cert_dir: Path) -> Tuple[Path, Path, Path]:
 
 def _load_meta(meta_path: Path) -> Optional[dict]:
     try:
-        return json.loads(meta_path.read_text(encoding="utf-8"))
+        value = json.loads(meta_path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else None
     except (OSError, ValueError):
         return None
 
@@ -39,13 +41,24 @@ def _needs_regeneration(hosts: List[str], cert_path: Path, key_path: Path, meta_
     meta = _load_meta(meta_path)
     if meta is None:
         return True
-    covered = set(meta.get("hosts", []))
+    covered_hosts = meta.get("hosts")
+    if not isinstance(covered_hosts, list) or not all(isinstance(host, str) for host in covered_hosts):
+        return True
+    covered = set(covered_hosts)
     if not set(hosts) <= covered:
         return True
     not_after = meta.get("not_after")
     if not isinstance(not_after, (int, float)):
         return True
-    return time.time() > not_after - RENEWAL_BUFFER_DAYS * 86400
+    if time.time() > not_after - RENEWAL_BUFFER_DAYS * 86400:
+        return True
+    # Metadata alone cannot detect truncated PEM files or mismatched pairs
+    # left by an interrupted write. Validate with the same TLS loader as HTTPS.
+    try:
+        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cert_path, key_path, password="")
+    except (OSError, ValueError):
+        return True
+    return False
 
 
 def ensure_self_signed_certificate(hosts: List[str], cert_dir: Path = CERT_DIR) -> Tuple[Path, Path]:
@@ -63,8 +76,7 @@ def ensure_self_signed_certificate(hosts: List[str], cert_dir: Path = CERT_DIR) 
         return cert_path, key_path
 
     # Imported lazily: this native-extension dependency should not become a
-    # hard startup requirement for code paths that never call this function
-    # (e.g. the packaged .exe, which doesn't use HTTPS yet).
+    # hard startup requirement for code paths that never call this function.
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa

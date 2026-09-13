@@ -106,10 +106,14 @@ local function checkServerStatus(callback)
       end
       if callback then callback(true) end
     else
+      local was_running = server_running
       server_running = false
       local_https_url = nil
       local_http_url = nil
       last_status_error = err and tostring(err) or ("HTTP " .. tostring(response and response.status or "no response"))
+      if was_running and not manually_stopped then
+        launch_error = "Lost connection to the server: " .. last_status_error .. ". Retrying automatically; if it persists, stop and restart the server."
+      end
       if callback then callback(false) end
     end
   end
