@@ -39,13 +39,9 @@ local control_headers = {
   ["Content-Type"] = "application/json",
   ["X-AssettoGPS-Control"] = "1"
 }
-local https_control_headers = {
-  ["Content-Type"] = "application/json",
-  ["X-AssettoGPS-Control"] = "1",
-  -- The server certificate is generated locally and covers 127.0.0.1. Ignore
-  -- only its untrusted issuer; hostname and validity checks remain enabled.
-  [":https-ignore-errors"] = {"ca"}
-}
+local function controlPort()
+  return server_port < 65535 and server_port + 1 or server_port - 1
+end
 
 local function clamp01(value, fallback)
   return math.max(0.0, math.min(1.0, tonumber(value) or fallback or 0.0))
@@ -118,16 +114,8 @@ local function checkServerStatus(callback)
     end
   end
 
-  web.get("https://127.0.0.1:" .. server_port .. "/api/status", https_control_headers,
-    function(err, response)
-      if not err and response and response.status == 200 then
-        handleStatus(err, response)
-      else
-        -- HTTPS setup can fall back to HTTP on the same port. Keep the app
-        -- usable and make that limitation explicit in the UI.
-        web.get("http://127.0.0.1:" .. server_port .. "/api/status", handleStatus)
-      end
-    end)
+  -- This endpoint is bound only to loopback and needs no CSP TLS extensions.
+  web.get("http://127.0.0.1:" .. controlPort() .. "/api/status", handleStatus)
 end
 
 -- Start the packaged server as a CSP-managed background process.
@@ -146,7 +134,7 @@ local function startServer()
   launch_started_at = os.clock()
   os.runConsoleProcess({
     filename = server_executable,
-    arguments = {"--port", tostring(server_port), "--host", "0.0.0.0", "--https-only"},
+    arguments = {"--port", tostring(server_port), "--host", "0.0.0.0", "--control-port", tostring(controlPort())},
     workingDirectory = server_dir,
     separateStderr = true,
     assignJob = true
@@ -180,10 +168,8 @@ local function stopServer()
   launch_error = nil
   local_https_url = nil
   local_http_url = nil
-  local scheme = local_https_url and "https" or "http"
-  local headers = local_https_url and https_control_headers or control_headers
-  web.post(scheme .. "://127.0.0.1:" .. server_port .. "/api/shutdown",
-    headers, "", function(err, response)
+  web.post("http://127.0.0.1:" .. controlPort() .. "/api/shutdown",
+    control_headers, "", function(err, response)
     server_running = false
     if err or not response or response.status ~= 200 then
       launch_error = "Could not stop the server. Close and reopen the AC session before retrying."
@@ -255,7 +241,10 @@ function windowMain(dt)
   local phone_url = server_running and (local_https_url or local_http_url) or nil
   ui.text("Phone URL:")
   ui.sameLine()
-  ui.textColored(phone_url or "Waiting for server...", rgbm(0.22, 0.74, 0.97, 1.0))
+  ui.textColored(phone_url or (server_running and "HTTPS unavailable" or "Waiting for server..."), rgbm(0.22, 0.74, 0.97, 1.0))
+  if server_running and not phone_url then
+    ui.textWrapped("HTTPS could not start. Stop the server and try another port.")
+  end
   if phone_url and not local_https_url then
     ui.textWrapped("HTTPS is unavailable. This HTTP connection cannot keep the phone screen awake.")
   end
@@ -313,10 +302,8 @@ function script.update(dt)
           light_suggestion,
           ambient_occlusion
         )
-      local scheme = local_https_url and "https" or "http"
-      local headers = local_https_url and https_control_headers or control_headers
-      web.post(scheme .. "://127.0.0.1:" .. server_port .. "/api/environment",
-        headers, body, function(err, response) end)
+      web.post("http://127.0.0.1:" .. controlPort() .. "/api/environment",
+        control_headers, body, function(err, response) end)
     end
   end
 

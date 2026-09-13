@@ -57,11 +57,8 @@ def launcher_arguments(lua_path: Path, port: int):
     match = re.search(r"arguments\s*=\s*\{([^}]+)\}", source)
     if not match:
         raise RuntimeError("Cannot find the Lua server launch arguments")
-    arguments = json.loads("[" + match[1].replace("tostring(server_port)", f'"{port}"') + "]")
-    if '":https-ignore-errors"] = {"ca"}' not in source:
-        raise RuntimeError("Lua does not narrowly allow the self-signed certificate authority")
-    if '"https://127.0.0.1:" .. server_port .. "/api/status"' not in source:
-        raise RuntimeError("Lua status check does not use HTTPS on the selected port")
+    control_port = port + 1 if port < 65535 else port - 1
+    arguments = json.loads("[" + match[1].replace("tostring(server_port)", f'"{port}"').replace("tostring(controlPort())", f'"{control_port}"') + "]")
     return arguments
 
 
@@ -72,6 +69,8 @@ def unused_non_ephemeral_port():
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             try:
                 sock.bind(("0.0.0.0", port))
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as control:
+                    control.bind(("127.0.0.1", port + 1))
                 return port
             except OSError:
                 continue
@@ -118,12 +117,8 @@ def main() -> int:
     server_log = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
     process = subprocess.Popen(command, stdout=server_log, stderr=subprocess.STDOUT)
     context = None
-    if args.launcher:
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-    scheme = "https" if args.launcher else "http"
-    base_url = f"{scheme}://127.0.0.1:{port}"
+    control_port = port + 1 if args.launcher else port
+    base_url = f"http://127.0.0.1:{control_port}"
     control_headers = {
         "Content-Type": "application/json",
         "X-AssettoGPS-Control": "1",
@@ -175,7 +170,7 @@ def main() -> int:
                     f"({response.status}, {content_type}, {len(content)} bytes)"
                 )
 
-        frame = asyncio.run(receive_telemetry_frame(port, context))
+        frame = asyncio.run(receive_telemetry_frame(control_port))
         if "connected" not in frame or frame.get("isMock"):
             raise RuntimeError(f"Unexpected WebSocket telemetry frame: {frame}")
 
@@ -221,9 +216,19 @@ def main() -> int:
             expected_url = f"https://{status['localIp']}:{port}"
             if status.get("httpsUrl") != expected_url or status.get("httpUrl") is not None:
                 raise RuntimeError(f"Launcher did not advertise HTTPS: {status}")
-            _, secure_status = wait_until_ready(base_url, context=context)
+            phone_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            phone_context.check_hostname = False
+            phone_context.verify_mode = ssl.CERT_NONE
+            phone_url = f"https://127.0.0.1:{port}"
+            _, secure_status = wait_until_ready(phone_url, context=phone_context)
             if not secure_status["cspConnected"]:
                 raise RuntimeError(f"HTTPS did not preserve CSP environment state: {secure_status}")
+            with urllib.request.urlopen(phone_url, context=phone_context, timeout=3) as response:
+                if "<html" not in response.read().decode().lower():
+                    raise RuntimeError("HTTPS frontend was not served")
+            secure_frame = asyncio.run(receive_telemetry_frame(port, phone_context))
+            if "connected" not in secure_frame:
+                raise RuntimeError("WSS telemetry was not served")
 
         shutdown_code, _ = request_json(
             f"{base_url}/api/shutdown",

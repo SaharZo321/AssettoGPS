@@ -44,10 +44,14 @@ The default address is:
 
     https://<your-PC-address>:8080
 
-The in-game companion and phones use HTTPS on the selected server port. Allow
-that port through Windows Firewall on your private network.
+Phones use HTTPS on the selected server port. Allow that port through Windows
+Firewall on your private network. The in-game companion uses HTTP on a separate
+loopback-only control port (selected port + 1, or 65534 when selecting 65535).
+That internal port is not a phone URL and requires no firewall rule or CSP TLS support.
+The companion targets CSP 0.2.11 and newer; it does not use preview-only
+certificate-bypass headers.
 The app only displays a phone URL after the server responds. If HTTPS setup
-fails, it labels the HTTP fallback as unable to keep the phone screen awake.
+fails, it reports HTTPS as unavailable while retaining local stop/status controls.
 
 The connection is HTTPS with a self-signed, locally-generated certificate -
 browsers only grant the Screen Wake Lock API (which keeps a paired phone's

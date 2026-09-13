@@ -291,6 +291,35 @@ def test_https_only_port_conflict_falls_back_to_plain_http():
         server.uvicorn_https_server = original_uvicorn_https_server
 
 
+@pytest.mark.parametrize("tls_failure", [False, True])
+def test_packaged_control_port_stays_loopback_and_preserves_phone_port(monkeypatch, tls_failure):
+    monkeypatch.setattr(server, "server_runtime_config", None)
+    monkeypatch.setattr(server, "get_all_local_ips", lambda: ["192.168.1.20"])
+    monkeypatch.setattr(server, "get_local_ip", lambda: "192.168.1.20")
+    monkeypatch.setattr(server, "_port_is_available", lambda host, port: True)
+    certificate = mock.Mock(return_value=("cert.pem", "key.pem"))
+    if tls_failure:
+        certificate.side_effect = OSError("certificate unavailable")
+    monkeypatch.setattr(tls, "ensure_self_signed_certificate", certificate)
+    config = mock.Mock()
+    monkeypatch.setattr(server.uvicorn, "Config", config)
+    monkeypatch.setattr(server.uvicorn, "Server", mock.Mock())
+    serve = mock.AsyncMock()
+    monkeypatch.setattr(server, "_serve_both", serve)
+    server.main(["--host", "0.0.0.0", "--port", "9000", "--control-port", "9001"])
+    configs = [call.kwargs for call in config.call_args_list]
+    assert configs[0]["host"] == "127.0.0.1" and configs[0]["port"] == 9001
+    status = asyncio.run(server.get_status())
+    assert status["httpUrl"] is None
+    if tls_failure:
+        assert len(configs) == 1 and status["httpsUrl"] is None
+        serve.assert_not_called()
+    else:
+        assert configs[1]["host"] == "0.0.0.0" and configs[1]["port"] == 9000
+        assert status["httpsUrl"] == "https://192.168.1.20:9000"
+        serve.assert_awaited_once()
+
+
 def test_loopback_detection():
     assert server.is_loopback_host("127.0.0.1")
     assert server.is_loopback_host("::1")

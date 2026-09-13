@@ -305,6 +305,8 @@ async def get_status():
             server_runtime_config["https_port"],
             server_runtime_config["https_only"],
         )
+        if server_runtime_config.get("control_port") is not None:
+            http_url = None  # The loopback-only control listener is not a phone URL.
     return {
         "isGameRunning": server_state["isGameRunning"],
         "currentTrack": server_state["currentTrack"],
@@ -453,6 +455,7 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="AssettoGPS local telemetry server")
     parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8080")))
+    parser.add_argument("--control-port", type=int, help="Serve HTTP controls on loopback at this port and HTTPS on --port.")
     parser.add_argument(
         "--https-port",
         type=int,
@@ -464,9 +467,17 @@ def parse_args(argv=None):
         "--https-only",
         action="store_true",
         help="Serve HTTPS only, on --port, instead of a plain-HTTP + HTTPS pair. "
-        "Used by the packaged launcher so its selected port is the phone URL port.",
+        "For standalone HTTPS without the packaged launcher's HTTP control listener.",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.control_port is not None:
+        if not 1024 <= args.port <= 65535:
+            parser.error("--port must be from 1024 to 65535 with --control-port")
+        if not 1024 <= args.control_port <= 65535 or args.control_port == args.port:
+            parser.error("--control-port must be a distinct port from 1024 to 65535")
+        if args.https_only:
+            parser.error("--control-port cannot be combined with --https-only")
+    return args
 
 
 async def _serve_both(primary: uvicorn.Server, secondary: uvicorn.Server) -> None:
@@ -520,12 +531,14 @@ def main(argv=None):
 
     args = parse_args(argv)
     loopback = is_loopback_host(args.host)
-    dual_mode = not args.https_only and not loopback
+    dual_mode = args.control_port is not None or (not args.https_only and not loopback)
     https_only = args.https_only
+    http_port = args.control_port if args.control_port is not None else args.port
+    http_host = "127.0.0.1" if args.control_port is not None else args.host
 
     https_port = None
     if dual_mode:
-        https_port = args.https_port if args.https_port is not None else args.port + 1
+        https_port = args.port if args.control_port is not None else (args.https_port if args.https_port is not None else args.port + 1)
 
     cert_path = key_path = None
     if https_only or dual_mode:
@@ -548,12 +561,13 @@ def main(argv=None):
             https_port = None
 
     server_runtime_config = {
-        "port": args.port,
+        "port": http_port,
+        "control_port": args.control_port,
         "https_port": https_port,
         "https_only": https_only,
     }
 
-    print_startup_banner(args.host, args.port, https_port, https_only)
+    print_startup_banner(args.host, http_port, https_port, https_only)
     shutdown_event.clear()
     _startup_started = False
 
@@ -575,7 +589,7 @@ def main(argv=None):
             uvicorn_server = None
         return
 
-    http_config = uvicorn.Config(app, host=args.host, port=args.port, log_level="warning")
+    http_config = uvicorn.Config(app, host=http_host, port=http_port, log_level="warning")
     uvicorn_server = uvicorn.Server(http_config)
 
     if dual_mode:

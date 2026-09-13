@@ -2,14 +2,15 @@
 
 from pathlib import Path
 
-from lupa import LuaRuntime
+from lupa.luajit21 import LuaRuntime
 
 
 SOURCE = Path(__file__).resolve().parents[1] / "ac_app/lua/AssettoGPS/AssettoGPS.lua"
 
 
-def companion():
+def companion(port=8080):
     lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.globals().selectedPort = port
     lua.execute('''
         now = 0
         timers = {}
@@ -18,13 +19,12 @@ def companion():
         messages = {}
         clicked = nil
         alive = false
-        httpFallback = false
         missing = false
         statusBody = '{"localIp":"192.168.1.20","httpUrl":null,"httpsUrl":"https://192.168.1.20:8080"}'
         script = {}
         ac = {FolderID = {ScriptOrigin = 1}}
         ac.getFolder = function() return '/app' end
-        ac.storage = function(defaults) return defaults end
+        ac.storage = function(defaults) defaults.serverPort = selectedPort; return defaults end
         ac.getSim = function() return nil end
         ac.getCar = function() return nil end
         io.fileExists = function() return not missing end
@@ -36,14 +36,15 @@ def companion():
         setTimeout = function(callback) table.insert(timers, callback) end
         web = {}
         web.get = function(url, headers, callback)
+            assert(url:sub(1, 17) == 'http://127.0.0.1:', 'CSP control must not need TLS support')
             if type(headers) == 'function' then callback, headers = headers, nil end
             table.insert(requests, url)
             table.insert(requestHeaders, headers or {})
-            local schemeWorks = not httpFallback or url:sub(1, 7) == 'http://'
-            if alive and schemeWorks then callback(nil, {status = 200, body = statusBody})
+            if alive then callback(nil, {status = 200, body = statusBody})
             else callback('connection refused', nil) end
         end
         web.post = function(url, headers, body, callback)
+            assert(url:sub(1, 17) == 'http://127.0.0.1:', 'CSP control must not need TLS support')
             table.insert(requests, url)
             table.insert(requestHeaders, headers or {})
             callback(nil, {status = 200})
@@ -75,7 +76,7 @@ def main():
     assert "http://" not in app.draw()
     lua.execute("timers[1]()")
     assert list(app.launched.arguments.values()) == [
-        "--port", "8080", "--host", "0.0.0.0", "--https-only"
+        "--port", "8080", "--host", "0.0.0.0", "--control-port", "8081"
     ]
     assert "STARTING" in app.draw()
     app.now = 31
@@ -88,25 +89,28 @@ def main():
     app.now = 36
     app.script.update(0.1)
     assert "ONLINE" in app.draw() and "https://192.168.1.20:8080" in app.draw()
-    assert app.requestHeaders[3][":https-ignore-errors"][1] == "ca"
     app.clicked = "Copy URL"
     app.draw()
     assert app.copied == "https://192.168.1.20:8080"
+    app.clicked = "Stop Server"
+    app.draw()
+    assert list(app.requests.values())[-1] == "http://127.0.0.1:8081/api/shutdown"
 
-    # HTTP fallback must replace a previous HTTPS URL and explain the limitation.
-    app.statusBody = '{"httpUrl":"http://192.168.1.20:8080","httpsUrl":null}'
-    app.httpFallback = True
+    # TLS failure leaves local controls usable without advertising a dead URL.
+    lua, app = companion()
+    lua.execute("timers[1]()")
+    app.alive = True
+    app.statusBody = '{"httpUrl":null,"httpsUrl":null}'
     app.now = 41
     app.script.update(0.1)
     display = app.draw()
-    assert "http://192.168.1.20:8080" in display
-    assert "HTTPS is unavailable" in display and "https://" not in display
+    assert "HTTPS unavailable" in display and "https://" not in display
     app.clicked = "Stop Server"
     app.draw()
-    assert list(app.requests.values())[-1] == "http://127.0.0.1:8080/api/shutdown"
+    assert list(app.requests.values())[-1] == "http://127.0.0.1:8081/api/shutdown"
     assert list(app.requests.values())[-2:] == [
-        "http://127.0.0.1:8080/api/status",
-        "http://127.0.0.1:8080/api/shutdown",
+        "http://127.0.0.1:8081/api/status",
+        "http://127.0.0.1:8081/api/shutdown",
     ]
 
     lua, app = companion()
@@ -120,6 +124,13 @@ def main():
     lua.execute("timers[1]()")
     assert "Missing server/AssettoGPS.Server.exe" in app.draw()
     assert app.launched is None
+    for port, control_port in ((9000, 9001), (65535, 65534)):
+        lua, app = companion(port)
+        lua.execute("timers[1]()")
+        assert list(app.launched.arguments.values()) == [
+            "--port", str(port), "--host", "0.0.0.0", "--control-port", str(control_port)
+        ]
+        assert list(app.requests.values())[0] == f"http://127.0.0.1:{control_port}/api/status"
     print("Lua companion startup, timeout, recovery, pairing, shutdown and process-error checks passed.")
 
 
