@@ -1,11 +1,15 @@
-"""Launch a source or packaged AssettoGPS server and verify its HTTP lifecycle."""
+"""Verify a source or packaged server, including the actual Lua launch contract."""
 
 import argparse
 import asyncio
 import json
+from pathlib import Path
+import re
 import socket
+import ssl
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -19,30 +23,58 @@ def unused_port() -> int:
         return sock.getsockname()[1]
 
 
-def request_json(url: str, *, method: str = "GET", headers=None, payload=None):
+def request_json(url: str, *, method: str = "GET", headers=None, payload=None, context=None):
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
-    with urllib.request.urlopen(request, timeout=2.0) as response:
+    with urllib.request.urlopen(request, timeout=2.0, context=context) as response:
         return response.status, json.loads(response.read().decode("utf-8"))
 
 
-def wait_until_ready(base_url: str, timeout: float = 20.0):
+def wait_until_ready(base_url: str, timeout: float = 30.0, context=None):
     deadline = time.monotonic() + timeout
     last_error = None
     while time.monotonic() < deadline:
         try:
-            return request_json(f"{base_url}/api/status")
+            return request_json(f"{base_url}/api/status", context=context)
         except (OSError, urllib.error.URLError) as error:
             last_error = error
             time.sleep(0.2)
     raise RuntimeError(f"Server did not become ready: {last_error}")
 
 
-async def receive_telemetry_frame(port: int):
-    uri = f"ws://127.0.0.1:{port}/ws/telemetry"
-    async with websockets.connect(uri, open_timeout=3.0) as websocket:
+async def receive_telemetry_frame(port: int, context=None):
+    scheme = "wss" if context else "ws"
+    uri = f"{scheme}://127.0.0.1:{port}/ws/telemetry"
+    async with websockets.connect(uri, open_timeout=3.0, **({"ssl": context} if context else {})) as websocket:
         payload = await asyncio.wait_for(websocket.recv(), timeout=3.0)
         return json.loads(payload)
+
+
+def launcher_arguments(lua_path: Path, port: int):
+    """Read the shipped launcher so a test cannot silently use different flags."""
+    source = lua_path.read_text(encoding="utf-8")
+    match = re.search(r"arguments\s*=\s*\{([^}]+)\}", source)
+    if not match:
+        raise RuntimeError("Cannot find the Lua server launch arguments")
+    arguments = json.loads("[" + match[1].replace("tostring(server_port)", f'"{port}"') + "]")
+    for endpoint in ("status", "environment", "shutdown"):
+        if f'"http://127.0.0.1:" .. server_port .. "/api/{endpoint}"' not in source:
+            raise RuntimeError(f"Lua {endpoint} does not use the HTTP loopback control listener")
+    return arguments
+
+
+def unused_port_pair():
+    for _ in range(100):
+        port = unused_port()
+        if port == 65535:
+            continue
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind(("0.0.0.0", port + 1))
+            except OSError:
+                continue
+        return port
+    raise RuntimeError("Cannot find two free adjacent ports for the launcher test")
 
 
 def assert_mock_flag_rejected(server_command):
@@ -63,6 +95,7 @@ def assert_mock_flag_rejected(server_command):
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--launcher", type=Path, help="Test this shipped Lua launcher's dual HTTP/HTTPS configuration")
     parser.add_argument(
         "server_command",
         nargs="+",
@@ -71,7 +104,7 @@ def main() -> int:
     args = parser.parse_args()
     assert_mock_flag_rejected(args.server_command)
 
-    port = unused_port()
+    port = unused_port_pair() if args.launcher else unused_port()
     command = [
         *args.server_command,
         "--host",
@@ -79,11 +112,10 @@ def main() -> int:
         "--port",
         str(port),
     ]
-    process = subprocess.Popen(
-        command,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    if args.launcher:
+        command = [*args.server_command, *launcher_arguments(args.launcher, port)]
+    server_log = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
+    process = subprocess.Popen(command, stdout=server_log, stderr=subprocess.STDOUT)
     base_url = f"http://127.0.0.1:{port}"
     control_headers = {
         "Content-Type": "application/json",
@@ -175,6 +207,26 @@ def main() -> int:
         if environment_code != 200:
             raise RuntimeError(f"Environment endpoint returned {environment_code}")
 
+        if args.launcher:
+            expected_url = f"https://{status['localIp']}:{port + 1}"
+            if status.get("httpsUrl") != expected_url:
+                raise RuntimeError(f"Launcher did not advertise HTTPS: {status}")
+            # Test the local, self-signed listener without modifying OS trust.
+            # This exception is confined to the smoke test, never CSP control.
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            https_url = f"https://127.0.0.1:{port + 1}"
+            _, secure_status = wait_until_ready(https_url, context=context)
+            if secure_status.get("httpsUrl") != expected_url or not secure_status["cspConnected"]:
+                raise RuntimeError(f"HTTPS did not share the HTTP CSP environment state: {secure_status}")
+            with urllib.request.urlopen(https_url, context=context, timeout=3) as response:
+                if "<html" not in response.read().decode().lower():
+                    raise RuntimeError("HTTPS frontend was not served")
+            secure_frame = asyncio.run(receive_telemetry_frame(port + 1, context))
+            if "connected" not in secure_frame:
+                raise RuntimeError(f"Invalid WSS telemetry: {secure_frame}")
+
         shutdown_code, _ = request_json(
             f"{base_url}/api/shutdown",
             method="POST",
@@ -186,6 +238,10 @@ def main() -> int:
         return_code = process.wait(timeout=10.0)
         if return_code != 0:
             raise RuntimeError(f"Server exited with code {return_code}")
+    except Exception:
+        server_log.seek(0)
+        print(server_log.read(), file=sys.stderr)
+        raise
     finally:
         if process.poll() is None:
             process.terminate()
@@ -193,8 +249,10 @@ def main() -> int:
                 process.wait(timeout=5.0)
             except subprocess.TimeoutExpired:
                 process.kill()
+                process.wait(timeout=5.0)
+        server_log.close()
 
-    print("Packaged server smoke test passed.")
+    print(f"Server smoke test passed ({'Lua launcher + HTTPS/WSS' if args.launcher else 'loopback HTTP'}).")
     return 0
 
 

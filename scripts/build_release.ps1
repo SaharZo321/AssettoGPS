@@ -117,6 +117,11 @@ try {
         throw "Packaged server smoke test failed."
     }
 
+    uv run --group build python tests\smoke_server.py --launcher (Join-Path $appStage "AssettoGPS.lua") (Join-Path $serverStage "AssettoGPS.Server.exe")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Packaged Lua launcher HTTPS smoke test failed."
+    }
+
     if (Test-Path -LiteralPath $zipPath) {
         Remove-Item -LiteralPath $zipPath -Force
     }

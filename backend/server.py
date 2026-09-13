@@ -464,7 +464,7 @@ def parse_args(argv=None):
         "--https-only",
         action="store_true",
         help="Serve HTTPS only, on --port, instead of a plain-HTTP + HTTPS pair. "
-        "Not currently used by the packaged in-game launcher.",
+        "The packaged launcher uses dual mode for HTTP loopback control.",
     )
     return parser.parse_args(argv)
 
@@ -539,14 +539,9 @@ def main(argv=None):
             if not _port_is_available(args.host, bind_port):
                 raise OSError(f"port {bind_port} is already in use")
         except Exception as e:
-            # --https-only is what the packaged in-game launcher will use for
-            # the actual release, and dual mode is today's fallback for any
-            # --host 0.0.0.0 run (e.g. the launcher before that lands). Either
-            # way, a broken HTTPS setup - missing/broken `cryptography`
-            # bundling this repo can't verify from WSL, no write access to
-            # the cert cache dir, a port conflict, etc. - must never take the
-            # whole app down: a working app that can't keep the phone's
-            # screen awake beats a completely broken one.
+            # Preserve HTTP control if certificate setup or the HTTPS port
+            # fails. The packaged launcher uses dual mode and reports this
+            # fallback to the user; release smoke tests require HTTPS to work.
             print(f"[!] Could not set up HTTPS ({e}); continuing with HTTP only.")
             dual_mode = False
             https_only = False

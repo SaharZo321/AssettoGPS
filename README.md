@@ -42,7 +42,13 @@ Open the Assetto GPS app in-game and wait for its status to show **ONLINE**.
 Open the displayed URL on another device connected to the same local network.
 The default address is:
 
-    https://<your-PC-address>:8080
+    https://<your-PC-address>:8081
+
+The in-game companion uses HTTP on port 8080 for local status and controls;
+phones use HTTPS on port 8081. With a custom server port, HTTPS uses the next
+port. Allow that HTTPS port through Windows Firewall on your private network.
+The app only displays a phone URL after the server responds. If HTTPS setup
+fails, it labels the HTTP fallback as unable to keep the phone screen awake.
 
 The connection is HTTPS with a self-signed, locally-generated certificate -
 browsers only grant the Screen Wake Lock API (which keeps a paired phone's

@@ -1,0 +1,114 @@
+"""Run the actual companion script with simulated CSP I/O (test-only lupa)."""
+
+from pathlib import Path
+
+from lupa import LuaRuntime
+
+
+SOURCE = Path(__file__).resolve().parents[1] / "ac_app/lua/AssettoGPS/AssettoGPS.lua"
+
+
+def companion():
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute('''
+        now = 0
+        timers = {}
+        requests = {}
+        messages = {}
+        clicked = nil
+        alive = false
+        missing = false
+        statusBody = '{"localIp":"192.168.1.20","httpUrl":"http://192.168.1.20:8080","httpsUrl":"https://192.168.1.20:8081"}'
+        script = {}
+        ac = {FolderID = {ScriptOrigin = 1}}
+        ac.getFolder = function() return '/app' end
+        ac.storage = function(defaults) return defaults end
+        ac.getSim = function() return nil end
+        ac.getCar = function() return nil end
+        io.fileExists = function() return not missing end
+        os.clock = function() return now end
+        os.runConsoleProcess = function(options, callback)
+            launched = options
+            exited = callback
+        end
+        setTimeout = function(callback) table.insert(timers, callback) end
+        web = {}
+        web.get = function(url, callback)
+            table.insert(requests, url)
+            if alive then callback(nil, {status = 200, body = statusBody})
+            else callback('connection refused', nil) end
+        end
+        web.post = function(url, headers, body, callback)
+            table.insert(requests, url)
+            callback(nil, {status = 200})
+        end
+        rgbm = function() return {} end
+        vec2 = function() return {} end
+        ui = {Font = {Title = 1}, InputTextFlags = {CharsDecimal = 1}}
+        ui.inputText = function(_, value) return value, false, false end
+        ui.button = function(label) return clicked == label end
+        ui.setClipboardText = function(value) copied = value end
+        for _, name in ipairs({'text', 'textColored', 'textWrapped', 'textDisabled'}) do
+            ui[name] = function(value) table.insert(messages, value) end
+        end
+        setmetatable(ui, {__index = function() return function() end end})
+        draw = function()
+            messages = {}
+            windowMain(0.1)
+            clicked = nil
+            return table.concat(messages, '\\n')
+        end
+    ''')
+    lua.execute(SOURCE.read_text(encoding="utf-8"))
+    return lua, lua.globals()
+
+
+def main():
+    lua, app = companion()
+    assert "Waiting for server..." in app.draw()
+    assert "http://" not in app.draw()
+    lua.execute("timers[1]()")
+    assert list(app.launched.arguments.values()) == ["--port", "8080", "--host", "0.0.0.0"]
+    assert "STARTING" in app.draw()
+    app.now = 31
+    app.script.update(0.1)
+    assert "ERROR" in app.draw() and "30 seconds" in app.draw()
+    assert "http://" not in app.draw()
+
+    # A late successful heartbeat recovers from timeout without another process.
+    app.alive = True
+    app.now = 36
+    app.script.update(0.1)
+    assert "ONLINE" in app.draw() and "https://192.168.1.20:8081" in app.draw()
+    app.clicked = "Copy URL"
+    app.draw()
+    assert app.copied == "https://192.168.1.20:8081"
+
+    # HTTP fallback must replace a previous HTTPS URL and explain the limitation.
+    app.statusBody = '{"httpUrl":"http://192.168.1.20:8080","httpsUrl":null}'
+    app.now = 41
+    app.script.update(0.1)
+    display = app.draw()
+    assert "http://192.168.1.20:8080" in display
+    assert "HTTPS is unavailable" in display and "https://" not in display
+    app.clicked = "Stop Server"
+    app.draw()
+    assert list(app.requests.values())[-1] == "http://127.0.0.1:8080/api/shutdown"
+    assert all(url.startswith("http://127.0.0.1:") for url in app.requests.values())
+
+    lua, app = companion()
+    lua.execute("timers[1]()")
+    lua.execute("exited(nil, {exitCode = 3, stderr = 'Address already in use'})")
+    assert "ERROR" in app.draw() and "Address already in use" in app.draw()
+    assert "Exit code: 3" in app.draw()
+
+    lua, app = companion()
+    app.missing = True
+    lua.execute("timers[1]()")
+    assert "Missing server/AssettoGPS.Server.exe" in app.draw()
+    assert app.launched is None
+    print("Lua companion startup, timeout, recovery, pairing, shutdown and process-error checks passed.")
+
+
+if __name__ == "__main__":
+    main()
