@@ -42,7 +42,25 @@ Open the Assetto GPS app in-game and wait for its status to show **ONLINE**.
 Open the displayed URL on another device connected to the same local network.
 The default address is:
 
-    http://<your-PC-address>:8080
+    https://<your-PC-address>:8080
+
+Phones use HTTPS on the selected server port. Allow that port through Windows
+Firewall on your private network. The in-game companion uses HTTP on a separate
+loopback-only control port (selected port + 1, or 65534 when selecting 65535).
+That internal port is not a phone URL and requires no firewall rule or CSP TLS support.
+The companion targets CSP 0.2.11 and newer; it does not use preview-only
+certificate-bypass headers.
+The app only displays a phone URL after the server responds. If HTTPS setup
+fails, it reports HTTPS as unavailable while retaining local stop/status controls.
+
+The connection is HTTPS with a self-signed, locally-generated certificate -
+browsers only grant the Screen Wake Lock API (which keeps a paired phone's
+screen from sleeping while navigating) on a secure connection, and plain HTTP
+over a LAN address never qualifies. The first connection from a new
+phone/browser shows a one-time "connection isn't private" warning - tap
+**Advanced -> Proceed**; this is expected, since the certificate is
+self-issued for this private server rather than from a public certificate
+authority. It won't ask again on that device after the first time.
 
 Auto theme uses CSP's live ambient-light and track-occlusion data, so it reacts
 to daylight, night, and genuinely dark covered areas without relying on the
@@ -119,6 +137,24 @@ Start the development server:
     uv run backend/dev_server.py
 
 Then open http://127.0.0.1:8080.
+
+To pair a phone or tablet against the development server, bind it to the
+network instead of loopback-only:
+
+    uv run backend/dev_server.py --host 0.0.0.0
+
+This serves plain HTTP on `--port` (8080 by default) exactly as before, and
+additionally serves HTTPS with a self-signed, locally-generated certificate on
+`--port + 1` (8081 by default, override with `--https-port`). **Use the
+`https://` URL printed in the startup banner for phone pairing, not the
+`http://` one** - browsers only grant the Screen Wake Lock API (which keeps a
+paired phone's screen from sleeping) on a secure context, and plain HTTP over
+a LAN address never qualifies. The first connection from a new phone/browser
+shows a one-time "connection isn't private" warning - tap **Advanced ->
+Proceed**; this is expected, since the certificate is self-issued for this
+private server and isn't from a public certificate authority. It won't ask
+again on that device after the first time. Windows Firewall needs an inbound
+allow rule for the HTTPS port too, same as the existing one for `--port`.
 
 For frontend development, keep the compiler running in a second terminal:
 

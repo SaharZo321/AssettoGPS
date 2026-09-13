@@ -64,11 +64,16 @@ jobs:
       - name: Run unit tests
         run: uv run --group test pytest
 
+      - name: Exercise Lua companion lifecycle
+        run: uv run --with lupa==2.6 python tests/smoke_launcher.py
+
       - name: Audit SRP routing
         run: uv run python scripts/verify_srp_routing.py
 
       - name: Smoke test source server
-        run: uv run python tests/smoke_server.py uv run python backend/server.py
+        run: |
+          uv run python tests/smoke_server.py uv run python backend/server.py
+          uv run python tests/smoke_server.py --launcher ac_app/lua/AssettoGPS/AssettoGPS.lua uv run python backend/server.py
 
   windows-release:
     name: Windows release

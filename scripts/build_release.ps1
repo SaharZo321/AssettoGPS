@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "0.1.0",
+    [string]$Version = "0.1.1",
     [switch]$SkipTests
 )
 
@@ -115,6 +115,11 @@ try {
     uv run --group build python tests\smoke_server.py (Join-Path $serverStage "AssettoGPS.Server.exe")
     if ($LASTEXITCODE -ne 0) {
         throw "Packaged server smoke test failed."
+    }
+
+    uv run --group build python tests\smoke_server.py --launcher (Join-Path $appStage "AssettoGPS.lua") (Join-Path $serverStage "AssettoGPS.Server.exe")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Packaged Lua launcher HTTPS smoke test failed."
     }
 
     if (Test-Path -LiteralPath $zipPath) {

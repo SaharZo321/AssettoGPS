@@ -4,6 +4,8 @@ import io
 import json
 import math
 import re
+import socket
+import ssl
 import sys
 import uuid
 from pathlib import Path
@@ -24,6 +26,7 @@ import ac_shared_memory
 import ac_track_finder
 import mock_telemetry
 import server
+import tls
 import verify_srp_routing
 
 
@@ -118,6 +121,16 @@ def test_custom_port_argument():
     assert args.port == 9123
 
 
+def test_https_port_and_https_only_arguments():
+    args = server.parse_args(["--host", "0.0.0.0", "--https-port", "9443"])
+    assert args.https_port == 9443
+    assert args.https_only is False
+
+    args = server.parse_args(["--https-only"])
+    assert args.https_only is True
+    assert args.https_port is None
+
+
 def test_public_server_rejects_mock_argument():
     with contextlib.redirect_stderr(io.StringIO()):
         with pytest.raises(SystemExit):
@@ -133,11 +146,210 @@ def test_public_server_has_no_mode_api_or_status():
     assert "mock_telemetry" not in source
 
 
+def test_build_pairing_urls_loopback_default_has_no_https():
+    assert server.build_pairing_urls("192.168.1.5", 8080, None, False) == (
+        "http://192.168.1.5:8080",
+        None,
+    )
+
+
+def test_build_pairing_urls_dual_mode_has_both():
+    assert server.build_pairing_urls("192.168.1.5", 8080, 8081, False) == (
+        "http://192.168.1.5:8080",
+        "https://192.168.1.5:8081",
+    )
+
+
+def test_build_pairing_urls_https_only_has_no_http():
+    assert server.build_pairing_urls("192.168.1.5", 8080, None, True) == (
+        None,
+        "https://192.168.1.5:8080",
+    )
+
+
+def test_status_pairing_urls_are_none_when_main_never_ran():
+    # get_status() is called directly here (as it is above), without main()
+    # ever setting server_runtime_config - it must degrade gracefully rather
+    # than raising, since real unit tests exercise it this way.
+    assert server.server_runtime_config is None
+    with mock.patch.object(server, "get_local_ip", return_value="127.0.0.1"):
+        status = asyncio.run(server.get_status())
+    assert status["httpUrl"] is None
+    assert status["httpsUrl"] is None
+
+
+def test_status_pairing_urls_reflect_runtime_config():
+    runtime_config = {"port": 8080, "https_port": 8081, "https_only": False}
+    with mock.patch.object(server, "get_local_ip", return_value="192.168.1.5"), \
+            mock.patch.object(server, "server_runtime_config", runtime_config):
+        status = asyncio.run(server.get_status())
+    assert status["httpUrl"] == "http://192.168.1.5:8080"
+    assert status["httpsUrl"] == "https://192.168.1.5:8081"
+
+
+def test_https_setup_failure_falls_back_to_http_only_in_dual_mode(capsys):
+    # Dual mode is the fallback for any --host 0.0.0.0 run that isn't
+    # --https-only (e.g. plain `dev_server.py --host 0.0.0.0`). A broken
+    # cert/cryptography setup (e.g. a PyInstaller bundling gap this repo
+    # can't verify from WSL) must not crash the plain-HTTP listener.
+    original_runtime_config = server.server_runtime_config
+    original_uvicorn_server = server.uvicorn_server
+    original_uvicorn_https_server = server.uvicorn_https_server
+    fake_server = mock.MagicMock()
+    try:
+        with mock.patch.object(tls, "ensure_self_signed_certificate", side_effect=RuntimeError("boom")), \
+                mock.patch.object(server.uvicorn, "Server", return_value=fake_server):
+            server.main(["--host", "0.0.0.0", "--port", "9001"])
+
+        fake_server.run.assert_called_once()
+        assert server.server_runtime_config["https_port"] is None
+        assert server.uvicorn_https_server is None
+        assert "Could not set up HTTPS" in capsys.readouterr().err
+    finally:
+        server.server_runtime_config = original_runtime_config
+        server.uvicorn_server = original_uvicorn_server
+        server.uvicorn_https_server = original_uvicorn_https_server
+
+
+def test_dual_mode_https_port_conflict_falls_back_to_http_only_not_a_crash():
+    # Regression test for a real bug: uvicorn.Server.startup() calls
+    # sys.exit() (not a catchable OSError) when its own bind fails, and with
+    # both listeners sharing one event loop that SystemExit was observed to
+    # propagate out of asyncio.run() and kill the whole process - including
+    # the working plain-HTTP listener - whenever the https_port happened to
+    # already be in use. This occupies a real port (not mocked) to exercise
+    # the actual pre-flight check that now prevents that.
+    blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    blocker.bind(("0.0.0.0", 0))
+    blocker.listen(1)
+    taken_port = blocker.getsockname()[1]
+
+    original_runtime_config = server.server_runtime_config
+    original_uvicorn_server = server.uvicorn_server
+    original_uvicorn_https_server = server.uvicorn_https_server
+    fake_server = mock.MagicMock()
+    try:
+        with mock.patch.object(server.uvicorn, "Server", return_value=fake_server):
+            server.main([
+                "--host", "0.0.0.0", "--port", "9003",
+                "--https-port", str(taken_port),
+            ])
+
+        fake_server.run.assert_called_once()
+        assert server.server_runtime_config["https_port"] is None
+        assert server.uvicorn_https_server is None
+    finally:
+        blocker.close()
+        server.server_runtime_config = original_runtime_config
+        server.uvicorn_server = original_uvicorn_server
+        server.uvicorn_https_server = original_uvicorn_https_server
+
+
+def test_https_only_setup_failure_falls_back_to_plain_http_on_same_port():
+    # --https-only is what the packaged in-game launcher uses for the actual
+    # release. A broken cert setup must not take the whole app down - it
+    # falls back to plain HTTP on the same --port instead, same as dual mode.
+    original_runtime_config = server.server_runtime_config
+    original_uvicorn_server = server.uvicorn_server
+    original_uvicorn_https_server = server.uvicorn_https_server
+    fake_server = mock.MagicMock()
+    try:
+        with mock.patch.object(tls, "ensure_self_signed_certificate", side_effect=RuntimeError("boom")), \
+                mock.patch.object(server.uvicorn, "Server", return_value=fake_server):
+            server.main(["--host", "0.0.0.0", "--port", "9002", "--https-only"])
+
+        fake_server.run.assert_called_once()
+        assert server.server_runtime_config["https_only"] is False
+        assert server.server_runtime_config["https_port"] is None
+    finally:
+        server.server_runtime_config = original_runtime_config
+        server.uvicorn_server = original_uvicorn_server
+        server.uvicorn_https_server = original_uvicorn_https_server
+
+
+def test_https_only_port_conflict_falls_back_to_plain_http():
+    blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    blocker.bind(("127.0.0.1", 0))
+    blocker.listen(1)
+    taken_port = blocker.getsockname()[1]
+
+    original_runtime_config = server.server_runtime_config
+    original_uvicorn_server = server.uvicorn_server
+    original_uvicorn_https_server = server.uvicorn_https_server
+    fake_server = mock.MagicMock()
+    try:
+        with mock.patch.object(server.uvicorn, "Server", return_value=fake_server):
+            server.main(["--host", "127.0.0.1", "--port", str(taken_port), "--https-only"])
+
+        fake_server.run.assert_called_once()
+        assert server.server_runtime_config["https_only"] is False
+    finally:
+        blocker.close()
+        server.server_runtime_config = original_runtime_config
+        server.uvicorn_server = original_uvicorn_server
+        server.uvicorn_https_server = original_uvicorn_https_server
+
+
+@pytest.mark.parametrize("tls_failure", [False, True])
+def test_packaged_control_port_stays_loopback_and_preserves_phone_port(monkeypatch, tls_failure):
+    monkeypatch.setattr(server, "server_runtime_config", None)
+    monkeypatch.setattr(server, "get_all_local_ips", lambda: ["192.168.1.20"])
+    monkeypatch.setattr(server, "get_local_ip", lambda: "192.168.1.20")
+    monkeypatch.setattr(server, "_port_is_available", lambda host, port: True)
+    certificate = mock.Mock(return_value=("cert.pem", "key.pem"))
+    if tls_failure:
+        certificate.side_effect = OSError("certificate unavailable")
+    monkeypatch.setattr(tls, "ensure_self_signed_certificate", certificate)
+    config = mock.Mock()
+    monkeypatch.setattr(server.uvicorn, "Config", config)
+    monkeypatch.setattr(server.uvicorn, "Server", mock.Mock())
+    serve = mock.AsyncMock()
+    monkeypatch.setattr(server, "_serve_both", serve)
+    server.main(["--host", "0.0.0.0", "--port", "9000", "--control-port", "9001"])
+    configs = [call.kwargs for call in config.call_args_list]
+    assert configs[-1]["host"] == "127.0.0.1" and configs[-1]["port"] == 9001
+    status = asyncio.run(server.get_status())
+    assert status["httpUrl"] is None
+    if tls_failure:
+        assert len(configs) == 1 and status["httpsUrl"] is None
+        serve.assert_not_called()
+    else:
+        assert configs[0]["host"] == "0.0.0.0" and configs[0]["port"] == 9000
+        assert status["httpsUrl"] == "https://192.168.1.20:9000"
+        serve.assert_awaited_once()
+
+
 def test_loopback_detection():
     assert server.is_loopback_host("127.0.0.1")
     assert server.is_loopback_host("::1")
     assert not server.is_loopback_host("192.168.1.20")
     assert not server.is_loopback_host("not-an-address")
+
+
+def test_tls_load_failure_preserves_packaged_http_controls(monkeypatch, tmp_path, capsys):
+    cert, key = tls.ensure_self_signed_certificate(["localhost"], cert_dir=tmp_path)
+    key.write_bytes(b"")
+    # Simulate damage after the certificate helper returned: use real Uvicorn
+    # configuration loading, but do not bind sockets or start the HTTP loop.
+    monkeypatch.setattr(tls, "ensure_self_signed_certificate", lambda hosts: (cert, key))
+    monkeypatch.setattr(server, "_port_is_available", lambda host, port: True)
+    monkeypatch.setattr(server, "server_runtime_config", None)
+    listener = mock.Mock()
+    factory = mock.Mock(return_value=listener)
+    monkeypatch.setattr(server.uvicorn, "Server", factory)
+    serve = mock.AsyncMock()
+    monkeypatch.setattr(server, "_serve_both", serve)
+    server.main(["--host", "0.0.0.0", "--port", "9000", "--control-port", "9001"])
+    factory.assert_called_once()
+    config = factory.call_args.args[0]
+    assert (config.host, config.port) == ("127.0.0.1", 9001)
+    listener.run.assert_called_once()
+    serve.assert_not_called()
+    status = asyncio.run(server.get_status())
+    assert status["httpsUrl"] is None and status["httpUrl"] is None
+    assert "continuing with HTTP only" in capsys.readouterr().err
 
 
 def test_control_requires_loopback_and_header():
@@ -488,6 +700,18 @@ def test_recenter_button_targets_the_active_map_mode():
     assert 'this.orientationMode === "headingUp" ? this.displayBearing : 0' in navigation
 
 
+def test_mobile_screen_wake_lock_is_native_only_and_reacquires():
+    app = (server.FRONTEND_DIR / "src" / "app.ts").read_text(encoding="utf-8")
+    index = (server.FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
+
+    assert 'if (!("wakeLock" in navigator)) return;' in app
+    assert 'document.addEventListener("visibilitychange"' in app
+    assert 'btnFullscreen.addEventListener("click"' in app
+    assert app.count("void this.requestWakeLock();") >= 3
+    assert "media-wake-lock" not in app
+    assert "media-wake-lock" not in index
+
+
 def test_navigation_car_uses_lower_fifth_tracking_position():
     renderer = (server.FRONTEND_DIR / "src" / "navigation-map-renderer.ts").read_text(
         encoding="utf-8"
@@ -541,3 +765,68 @@ def test_navigation_auto_zoom_is_twenty_five_percent_closer():
     assert "const displayJump" in renderer
     assert "this.matcher?.resetContinuity();" in renderer
     assert "this.recenter();" in renderer
+
+
+def test_ensure_self_signed_certificate_generates_and_caches(tmp_path):
+    cert_path, key_path = tls.ensure_self_signed_certificate(
+        ["localhost", "127.0.0.1"], cert_dir=tmp_path
+    )
+    assert cert_path.exists()
+    assert key_path.exists()
+    original_bytes = cert_path.read_bytes()
+
+    # A subset of the already-covered hosts must reuse the cached cert
+    # unchanged, not regenerate it - otherwise every incidental LAN-adapter
+    # change would force every paired phone to re-accept a new certificate.
+    cert_path2, key_path2 = tls.ensure_self_signed_certificate(["localhost"], cert_dir=tmp_path)
+    assert cert_path2 == cert_path
+    assert cert_path2.read_bytes() == original_bytes
+
+
+def test_ensure_self_signed_certificate_regenerates_for_new_host(tmp_path):
+    cert_path, _ = tls.ensure_self_signed_certificate(["localhost"], cert_dir=tmp_path)
+    original_bytes = cert_path.read_bytes()
+
+    cert_path2, _ = tls.ensure_self_signed_certificate(
+        ["localhost", "192.168.1.5"], cert_dir=tmp_path
+    )
+    assert cert_path2.read_bytes() != original_bytes
+
+
+@pytest.mark.parametrize("damage", ["empty_key", "empty_cert", "mismatched_key", "metadata_array", "metadata_hosts"])
+def test_certificate_cache_recovers_from_damage(tmp_path, damage):
+    cert, key = tls.ensure_self_signed_certificate(["localhost"], cert_dir=tmp_path)
+    original = cert.read_bytes()
+    if damage == "empty_key":
+        key.write_bytes(b"")
+    elif damage == "empty_cert":
+        cert.write_bytes(b"")
+    elif damage == "mismatched_key":
+        _, other_key = tls.ensure_self_signed_certificate(["localhost"], cert_dir=tmp_path / "other")
+        key.write_bytes(other_key.read_bytes())
+    elif damage == "metadata_array":
+        (tmp_path / "meta.json").write_text("[]", encoding="utf-8")
+    else:
+        (tmp_path / "meta.json").write_text('{"hosts": [null]}', encoding="utf-8")
+    repaired_cert, repaired_key = tls.ensure_self_signed_certificate(["localhost"], cert_dir=tmp_path)
+    assert repaired_cert.read_bytes() != original
+    ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(repaired_cert, repaired_key)
+    repaired = repaired_cert.read_bytes()
+    tls.ensure_self_signed_certificate(["localhost"], cert_dir=tmp_path)
+    assert repaired_cert.read_bytes() == repaired
+
+
+def test_ensure_self_signed_certificate_covers_requested_hosts(tmp_path):
+    from cryptography import x509
+
+    cert_path, _ = tls.ensure_self_signed_certificate(
+        ["localhost", "127.0.0.1", "192.168.1.5"], cert_dir=tmp_path
+    )
+    certificate = x509.load_pem_x509_certificate(cert_path.read_bytes())
+    san = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    dns_names = san.get_values_for_type(x509.DNSName)
+    ip_addresses = [str(ip) for ip in san.get_values_for_type(x509.IPAddress)]
+
+    assert "localhost" in dns_names
+    assert "127.0.0.1" in ip_addresses
+    assert "192.168.1.5" in ip_addresses

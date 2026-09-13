@@ -14,10 +14,20 @@ if server_port < 1024 or server_port > 65535 then
 end
 local port_input = tostring(server_port)
 local port_error = nil
-local local_ip = "127.0.0.1"
+-- Populated from /api/status's "httpsUrl" when the server has an HTTPS
+-- listener up; nil when it doesn't (loopback, or HTTPS setup failed and the
+-- server fell back to HTTP-only). Phones need the https:// URL for the
+-- browser's Screen Wake Lock API (keeps the screen from sleeping) to work -
+-- that API requires a secure context, which plain HTTP over a LAN address
+-- never satisfies.
+local local_https_url = nil
+local local_http_url = nil
 local server_running = false
+-- Remains true until CSP reports process exit, even after readiness succeeds.
 local launch_in_progress = false
 local launch_error = nil
+local launch_started_at = nil
+local last_status_error = nil
 local auto_boot_done = false
 local manually_stopped = false
 local last_check = 0
@@ -29,6 +39,9 @@ local control_headers = {
   ["Content-Type"] = "application/json",
   ["X-AssettoGPS-Control"] = "1"
 }
+local function controlPort()
+  return server_port < 65535 and server_port + 1 or server_port - 1
+end
 
 local function clamp01(value, fallback)
   return math.max(0.0, math.min(1.0, tonumber(value) or fallback or 0.0))
@@ -75,23 +88,38 @@ end
 
 -- Asynchronously ping local server status
 local function checkServerStatus(callback)
-  web.get("http://127.0.0.1:" .. server_port .. "/api/status", function(err, response)
+  local function handleStatus(err, response)
     if not err and response and response.status == 200 then
       if not manually_stopped then
         server_running = true
+        launch_error = nil
+        launch_started_at = nil
+        last_status_error = nil
       end
       if response.body then
-        local ip = response.body:match('"localIp"%s*:%s*"([^"]+)"')
-        if ip and #ip > 6 then
-          local_ip = ip
-        end
+        -- Reset (not just "update if present") so a server that falls back to
+        -- HTTP-only after a restart doesn't leave a stale, dead https:// URL
+        -- displayed to the player.
+        local https_url = response.body:match('"httpsUrl"%s*:%s*"([^"]+)"')
+        local_https_url = (https_url and #https_url > 0) and https_url or nil
+        local_http_url = response.body:match('"httpUrl"%s*:%s*"([^"]+)"')
       end
       if callback then callback(true) end
     else
+      local was_running = server_running
       server_running = false
+      local_https_url = nil
+      local_http_url = nil
+      last_status_error = err and tostring(err) or ("HTTP " .. tostring(response and response.status or "no response"))
+      if was_running and not manually_stopped then
+        launch_error = "Lost connection to the server: " .. last_status_error .. ". Retrying automatically; if it persists, stop and restart the server."
+      end
       if callback then callback(false) end
     end
-  end)
+  end
+
+  -- This endpoint is bound only to loopback and needs no CSP TLS extensions.
+  web.get("http://127.0.0.1:" .. controlPort() .. "/api/status", handleStatus)
 end
 
 -- Start the packaged server as a CSP-managed background process.
@@ -107,16 +135,27 @@ local function startServer()
   end
 
   launch_in_progress = true
+  launch_started_at = os.clock()
   os.runConsoleProcess({
     filename = server_executable,
-    arguments = {"--port", tostring(server_port), "--host", "0.0.0.0"},
+    arguments = {"--port", tostring(server_port), "--host", "0.0.0.0", "--control-port", tostring(controlPort())},
     workingDirectory = server_dir,
+    separateStderr = true,
     assignJob = true
   }, function(err, data)
     launch_in_progress = false
+    launch_started_at = nil
     server_running = false
-    if err then
-      launch_error = tostring(err)
+    local_https_url = nil
+    local_http_url = nil
+    if not manually_stopped then
+      launch_error = err and tostring(err) or "Server process exited. Try starting it again."
+      if data then
+        launch_error = launch_error .. " Exit code: " .. tostring(data.exitCode)
+        if data.stderr and #data.stderr > 0 then
+          launch_error = launch_error .. "\n" .. data.stderr:sub(-1200)
+        end
+      end
     end
   end)
 
@@ -129,9 +168,16 @@ end
 local function stopServer()
   manually_stopped = true
   server_running = false
-  web.post("http://127.0.0.1:" .. server_port .. "/api/shutdown",
+  launch_started_at = nil
+  launch_error = nil
+  local_https_url = nil
+  local_http_url = nil
+  web.post("http://127.0.0.1:" .. controlPort() .. "/api/shutdown",
     control_headers, "", function(err, response)
     server_running = false
+    if err or not response or response.status ~= 200 then
+      launch_error = "Could not stop the server. Close and reopen the AC session before retrying."
+    end
   end)
 end
 
@@ -157,6 +203,8 @@ function windowMain(dt)
   ui.sameLine()
   if server_running then
     ui.textColored("ONLINE", rgbm(0.2, 1.0, 0.4, 1.0))
+  elseif launch_error then
+    ui.textColored("ERROR", rgbm(1.0, 0.3, 0.3, 1.0))
   elseif launch_in_progress then
     ui.textColored("STARTING", rgbm(0.95, 0.8, 0.2, 1.0))
   else
@@ -194,17 +242,25 @@ function windowMain(dt)
   end
 
   -- Phone URL & Copy Button
-  local phone_url = "http://" .. local_ip .. ":" .. server_port
+  local phone_url = server_running and (local_https_url or local_http_url) or nil
   ui.text("Phone URL:")
   ui.sameLine()
-  ui.textColored(phone_url, rgbm(0.22, 0.74, 0.97, 1.0))
-
-  if ui.button("Copy URL", vec2(100, 24)) then
-    ui.setClipboardText(phone_url)
+  ui.textColored(phone_url or (server_running and "HTTPS unavailable" or "Waiting for server..."), rgbm(0.22, 0.74, 0.97, 1.0))
+  if server_running and not phone_url then
+    ui.textWrapped("HTTPS could not start. Stop the server and try another port.")
+  end
+  if phone_url and not local_https_url then
+    ui.textWrapped("HTTPS is unavailable. This HTTP connection cannot keep the phone screen awake.")
   end
 
+  if not phone_url then ui.pushDisabled() end
+  if ui.button("Copy URL", vec2(100, 24)) then
+    if phone_url then ui.setClipboardText(phone_url) end
+  end
+  if not phone_url then ui.popDisabled() end
+
   ui.sameLine()
-  if server_running then
+  if server_running or launch_in_progress then
     if ui.button("Stop Server", vec2(100, 24)) then
       stopServer()
     end
@@ -230,6 +286,10 @@ end
 -- Periodic async update loop
 function script.update(dt)
   local now = os.clock()
+  if launch_started_at and not server_running and now - launch_started_at > 30 then
+    launch_error = "Server did not respond within 30 seconds: " .. (last_status_error or "no status response")
+    launch_started_at = nil
+  end
   local car = ac.getCar(0)
   local light_level, is_dark, light_suggestion, ambient_occlusion = readLightSensor(dt, car)
 
@@ -246,7 +306,7 @@ function script.update(dt)
           light_suggestion,
           ambient_occlusion
         )
-      web.post("http://127.0.0.1:" .. server_port .. "/api/environment",
+      web.post("http://127.0.0.1:" .. controlPort() .. "/api/environment",
         control_headers, body, function(err, response) end)
     end
   end

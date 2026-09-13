@@ -5,12 +5,15 @@
 interface ServerStatus {
   localIp?: string;
   cspConnected?: boolean;
+  httpUrl?: string | null;
+  httpsUrl?: string | null;
 }
 
 class App {
   private ws: WebSocket | null = null;
   private reconnectTimer: number | undefined;
   private wakeLock: WakeLockSentinel | null = null;
+  private wakeLockRequestPending = false;
   private toastTimer: number | undefined;
   private cspLightAvailable = false;
   private readonly renderer: NavigationController;
@@ -34,23 +37,34 @@ class App {
         this.updateNavigationUi(message);
         this.showToast("Navigation Map could not start.");
       });
-    this.requestWakeLock();
+    void this.requestWakeLock();
+    if (!("wakeLock" in navigator)) {
+      // Most commonly hit over a plain http:// LAN URL, which isn't a secure
+      // context. Surface it instead of leaving the screen silently sleeping -
+      // Settings shows the https:// URL that fixes this, once the server has one.
+      this.showToast("Screen may sleep on this connection - use the https:// pairing URL in Settings.");
+    }
     this.connectWebSocket();
     this.startLoop();
   }
 
   async requestWakeLock(): Promise<void> {
+    if (!("wakeLock" in navigator)) return;
+    if (document.visibilityState !== "visible" || this.wakeLockRequestPending) return;
+    if (this.wakeLock && !this.wakeLock.released) return;
+
+    this.wakeLockRequestPending = true;
+
     try {
-      if ("wakeLock" in navigator) {
-        this.wakeLock = await navigator.wakeLock.request("screen");
-        document.addEventListener("visibilitychange", async () => {
-          if (this.wakeLock !== null && document.visibilityState === "visible") {
-            this.wakeLock = await navigator.wakeLock.request("screen");
-          }
-        });
-      }
+      const wakeLock = await navigator.wakeLock.request("screen");
+      this.wakeLock = wakeLock;
+      wakeLock.addEventListener("release", () => {
+        if (this.wakeLock === wakeLock) this.wakeLock = null;
+      }, { once: true });
     } catch (e) {
       console.warn("WakeLock error", e);
+    } finally {
+      this.wakeLockRequestPending = false;
     }
   }
 
@@ -149,11 +163,12 @@ class App {
       if (res.ok) {
         const data = await res.json() as ServerStatus;
         const urlEl = document.getElementById("device-network-url");
+        const pairingUrl = data.httpsUrl || data.httpUrl;
         if (urlEl) {
-          const port = window.location.port ? `:${window.location.port}` : "";
-          const ip = data.localIp || window.location.hostname;
-          urlEl.innerText = `http://${ip}${port}`;
+          urlEl.innerText = pairingUrl || window.location.origin;
         }
+        const httpsNote = document.getElementById("pairing-url-https-note");
+        if (httpsNote) httpsNote.hidden = !data.httpsUrl;
         this.updateAutoThemeCspNotice(data.cspConnected === true);
       }
     } catch (e) {
@@ -244,6 +259,13 @@ class App {
   }
 
   setupEventListeners(): void {
+    // Browsers release native wake locks whenever the page is hidden. Always
+    // retry after returning to the app; the listener must exist even when the
+    // initial request was rejected.
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") void this.requestWakeLock();
+    });
+
     // Recenter the MapLibre camera after manual pan or rotation.
     const btnRecenter = document.getElementById("btn-recenter");
     if (btnRecenter) {
@@ -296,8 +318,15 @@ class App {
     const btnFullscreen = document.getElementById("btn-fullscreen");
     if (btnFullscreen) {
       btnFullscreen.addEventListener("click", () => {
+        // Cheap extra chance to acquire the wake lock: a user gesture doesn't
+        // change document.visibilityState, so the visibilitychange-based
+        // retry below wouldn't otherwise fire here if the initial request failed.
+        void this.requestWakeLock();
         if (!document.fullscreenElement) {
-          document.documentElement.requestFullscreen().catch(() => {});
+          const requestFullscreen = document.documentElement.requestFullscreen;
+          if (requestFullscreen) {
+            requestFullscreen.call(document.documentElement).catch(() => {});
+          }
         } else {
           document.exitFullscreen().catch(() => {});
         }
@@ -459,8 +488,11 @@ class App {
       });
     }
 
-    // Unlock Audio on first user interaction
-    window.addEventListener("pointerdown", () => this.audio.unlock(), { once: true });
+    // Unlock audio and retry the wake lock from a browser-approved user gesture.
+    window.addEventListener("pointerdown", () => {
+      this.audio.unlock();
+      void this.requestWakeLock();
+    }, { once: true });
   }
 
   startLoop(): void {

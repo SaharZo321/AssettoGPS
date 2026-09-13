@@ -21,6 +21,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
+import tls
 from ac_shared_memory import AssettoCorsaSharedMemory, ac_shared_memory_available
 from ac_track_finder import ACTrackFinder
 from navigation import NavigationEngine
@@ -50,6 +51,14 @@ CONTROL_HEADER_NAME = "x-assettogps-control"
 CONTROL_HEADER_VALUE = "1"
 shutdown_event = threading.Event()
 uvicorn_server: Optional[uvicorn.Server] = None
+uvicorn_https_server: Optional[uvicorn.Server] = None
+_startup_started = False
+
+# Set by main() once the server's actual bind configuration is known; used by
+# build_pairing_urls() callers so /api/status and the startup banner agree.
+# Stays None (and pairing URLs degrade to None) when main() never ran, e.g.
+# in unit tests that call get_status() directly.
+server_runtime_config: Optional[Dict[str, Any]] = None
 
 # Active WebSocket connections
 active_connections: Set[WebSocket] = set()
@@ -104,6 +113,8 @@ def request_server_shutdown(delay: float = 0.0):
         shutdown_event.set()
         if uvicorn_server is not None:
             uvicorn_server.should_exit = True
+        if uvicorn_https_server is not None:
+            uvicorn_https_server.should_exit = True
 
     threading.Thread(target=stop_server, daemon=True).start()
 
@@ -132,8 +143,18 @@ def ac_watchdog_loop():
 
 @app.on_event("startup")
 async def on_startup():
-    """Start the AC process watchdog when the server is ready."""
+    """Start the AC process watchdog when the server is ready.
+
+    Dual HTTP+HTTPS mode runs the same FastAPI app under two uvicorn Server
+    instances, each of which drives its own ASGI lifespan cycle - so this
+    fires once per listener. Guard it so the watchdog thread (and the
+    should-run-once startup work) only spawns a single time.
+    """
+    global _startup_started
     shutdown_event.clear()
+    if _startup_started:
+        return
+    _startup_started = True
     if ac_watchdog_enabled:
         threading.Thread(target=ac_watchdog_loop, daemon=True).start()
 
@@ -184,26 +205,58 @@ def get_all_local_ips() -> list:
     return sorted(ips) or [get_local_ip()]
 
 
-def print_startup_banner(host: str, port: int = 8080):
-    """Prints a startup banner with the local and network pairing URLs"""
-    local_url = f"http://localhost:{port}"
+def build_pairing_urls(
+    ip: str, port: int, https_port: Optional[int], https_only: bool
+) -> "tuple[Optional[str], Optional[str]]":
+    """Returns (http_url, https_url) for one address, given the server's TLS mode.
 
+    - https_only: no plain-HTTP listener exists at all -> (None, https url on `port`).
+    - https_port set (dual mode): both listeners are up -> (http url on `port`,
+      https url on `https_port`).
+    - Neither (loopback default, no TLS): -> (http url on `port`, None).
+    """
+    if https_only:
+        return None, f"https://{ip}:{port}"
+    https_url = f"https://{ip}:{https_port}" if https_port else None
+    return f"http://{ip}:{port}", https_url
+
+
+def print_startup_banner(
+    host: str,
+    port: int = 8080,
+    https_port: Optional[int] = None,
+    https_only: bool = False,
+):
+    """Prints a startup banner with the local and network pairing URLs"""
     print("=" * 65)
     print("  ASSETTO CORSA GPS MINIMAP SERVER")
     print("=" * 65)
-    print(f"  Local URL : {local_url}")
-    if is_loopback_host(host):
+
+    if is_loopback_host(host) and not https_only:
+        print(f"  Local URL : http://localhost:{port}")
         print("  Only reachable from this machine (--host 127.0.0.1).")
         print("  Pass --host 0.0.0.0 to allow phone/tablet pairing over your network.")
     else:
+        local_http, local_https = build_pairing_urls("localhost", port, https_port, https_only)
+        print(f"  Local URL : {local_https or local_http}")
+
         local_ips = get_all_local_ips() if host == "0.0.0.0" else [host]
-        network_urls = [f"http://{ip}:{port}" for ip in local_ips]
+        network_urls = []
+        for ip in local_ips:
+            http_url, https_url = build_pairing_urls(ip, port, https_port, https_only)
+            network_urls.append(https_url or http_url)
+
         if len(network_urls) == 1:
             print(f"  Phone / Tablet URL : {network_urls[0]}")
         else:
             print("  Phone / Tablet URLs (pick the one on your device's network):")
             for url in network_urls:
                 print(f"    {url}")
+
+        print('  First connection from a new device shows a one-time "connection')
+        print('  isn\'t private" warning - tap Advanced > Proceed. The certificate')
+        print("  is self-issued for this private server - this is expected, and")
+        print("  is what lets phones keep their screen awake while navigating.")
     print("=" * 65)
     print("  Press [Ctrl + R] or [R] in this terminal to reset the session!")
     print("  Telemetry engine running... Ready for connections!\n")
@@ -244,6 +297,16 @@ def start_keyboard_listener():
 @app.get("/api/status")
 async def get_status():
     """Returns server and game connection status"""
+    http_url = https_url = None
+    if server_runtime_config is not None:
+        http_url, https_url = build_pairing_urls(
+            get_local_ip(),
+            server_runtime_config["port"],
+            server_runtime_config["https_port"],
+            server_runtime_config["https_only"],
+        )
+        if server_runtime_config.get("control_port") is not None:
+            http_url = None  # The loopback-only control listener is not a phone URL.
     return {
         "isGameRunning": server_state["isGameRunning"],
         "currentTrack": server_state["currentTrack"],
@@ -251,6 +314,8 @@ async def get_status():
         "connectedClients": len(active_connections),
         "localIp": get_local_ip(),
         "cspConnected": csp_environment_available(),
+        "httpUrl": http_url,
+        "httpsUrl": https_url,
     }
 
 
@@ -390,28 +455,156 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="AssettoGPS local telemetry server")
     parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8080")))
-    return parser.parse_args(argv)
+    parser.add_argument("--control-port", type=int, help="Serve HTTP controls on loopback at this port and HTTPS on --port.")
+    parser.add_argument(
+        "--https-port",
+        type=int,
+        default=(int(os.environ["HTTPS_PORT"]) if os.environ.get("HTTPS_PORT") else None),
+        help="Port for the HTTPS listener when pairing over a non-loopback --host "
+        "(default: --port + 1). Ignored with --https-only.",
+    )
+    parser.add_argument(
+        "--https-only",
+        action="store_true",
+        help="Serve HTTPS only, on --port, instead of a plain-HTTP + HTTPS pair. "
+        "For standalone HTTPS without the packaged launcher's HTTP control listener.",
+    )
+    args = parser.parse_args(argv)
+    if args.control_port is not None:
+        if not 1024 <= args.port <= 65535:
+            parser.error("--port must be from 1024 to 65535 with --control-port")
+        if not 1024 <= args.control_port <= 65535 or args.control_port == args.port:
+            parser.error("--control-port must be a distinct port from 1024 to 65535")
+        if args.https_only:
+            parser.error("--control-port cannot be combined with --https-only")
+    return args
+
+
+async def _serve_both(primary: uvicorn.Server, secondary: uvicorn.Server) -> None:
+    """Runs two uvicorn servers on one event loop until either one stops.
+
+    Both must share a single event loop rather than run on separate threads:
+    the whole app's shared mutable state (e.g. NavigationEngine) is only safe
+    from concurrent WebSocket handlers because today's single event loop
+    serializes them - two loops would let a desktop client (http) and a phone
+    client (https) actually race. Uvicorn also installs its own SIGINT/SIGTERM
+    handler per Server.serve() call, so with two servers only the most
+    recently started one would see Ctrl+C; propagating should_exit on whichever
+    stops first covers that too.
+    """
+    tasks = {asyncio.create_task(primary.serve()), asyncio.create_task(secondary.serve())}
+    await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    primary.should_exit = True
+    secondary.should_exit = True
+    await asyncio.gather(*tasks)
+
+
+def _port_is_available(host: str, port: int) -> bool:
+    """Best-effort check for whether a bind would succeed.
+
+    uvicorn.Server.startup() calls sys.exit() (not a catchable OSError) when
+    its own bind_socket() fails - e.g. the port is already in use. Under
+    _serve_both(), both listeners share one event loop, so a SystemExit
+    raised inside the HTTPS task's coroutine propagates out of the whole
+    asyncio.run() call and kills the primary HTTP listener too (verified: a
+    conflicting port + real dual-mode run exits the whole process with code
+    3). Checking with a plain socket first - and never constructing the
+    HTTPS Server/task at all if it fails - avoids ever reaching uvicorn's
+    sys.exit() path. There's a small unavoidable TOCTOU race against
+    whatever binds the port between this check and the real one, but that's
+    strictly better than today's unconditional crash-on-conflict.
+    """
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    probe = socket.socket(family, socket.SOCK_STREAM)
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        probe.bind((host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
 
 
 def main(argv=None):
-    global uvicorn_server
+    global uvicorn_server, uvicorn_https_server, server_runtime_config, _startup_started
 
     args = parse_args(argv)
-    print_startup_banner(args.host, args.port)
+    loopback = is_loopback_host(args.host)
+    dual_mode = args.control_port is not None or (not args.https_only and not loopback)
+    https_only = args.https_only
+    http_port = args.control_port if args.control_port is not None else args.port
+    http_host = "127.0.0.1" if args.control_port is not None else args.host
+
+    https_port = None
+    if dual_mode:
+        https_port = args.port if args.control_port is not None else (args.https_port if args.https_port is not None else args.port + 1)
+
+    cert_path = key_path = None
+    if https_only or dual_mode:
+        # https-only binds the one HTTPS listener on --port; dual mode binds
+        # it on the separate https_port alongside the unchanged HTTP listener.
+        bind_port = args.port if https_only else https_port
+        ips = get_all_local_ips() if args.host == "0.0.0.0" else [args.host]
+        hosts = sorted({"localhost", "127.0.0.1", *ips})
+        try:
+            cert_path, key_path = tls.ensure_self_signed_certificate(hosts)
+            if not _port_is_available(args.host, bind_port):
+                raise OSError(f"port {bind_port} is already in use")
+            https_config = uvicorn.Config(
+                app, host=args.host, port=bind_port,
+                ssl_certfile=str(cert_path), ssl_keyfile=str(key_path),
+                log_level="warning",
+            )
+            # Load TLS before starting either listener, inside the fallback
+            # handler. Uvicorn otherwise defers this until Server.serve().
+            https_config.load()
+        except Exception as e:
+            # Preserve service over HTTP if certificate setup or the HTTPS
+            # port fails. The launcher detects and reports this fallback;
+            # release smoke tests require packaged HTTPS to work.
+            print(f"[!] Could not set up HTTPS ({e}); continuing with HTTP only.", file=sys.stderr, flush=True)
+            dual_mode = False
+            https_only = False
+            https_port = None
+
+    server_runtime_config = {
+        "port": http_port,
+        "control_port": args.control_port,
+        "https_port": https_port,
+        "https_only": https_only,
+    }
+
+    print_startup_banner(args.host, http_port, https_port, https_only)
     shutdown_event.clear()
-    config = uvicorn.Config(
-        app,
-        host=args.host,
-        port=args.port,
-        log_level="warning",
-    )
-    uvicorn_server = uvicorn.Server(config)
+    _startup_started = False
+
+    if https_only:
+        uvicorn_server = uvicorn.Server(https_config)
+        try:
+            uvicorn_server.run()
+        finally:
+            shutdown_event.set()
+            ac_shm.disconnect()
+            uvicorn_server = None
+        return
+
+    http_config = uvicorn.Config(app, host=http_host, port=http_port, log_level="warning")
+    uvicorn_server = uvicorn.Server(http_config)
+
+    if dual_mode:
+        uvicorn_https_server = uvicorn.Server(https_config)
+
     try:
-        uvicorn_server.run()
+        if dual_mode:
+            asyncio.run(_serve_both(uvicorn_server, uvicorn_https_server))
+        else:
+            uvicorn_server.run()
     finally:
         shutdown_event.set()
         ac_shm.disconnect()
         uvicorn_server = None
+        uvicorn_https_server = None
 
 
 if __name__ == "__main__":

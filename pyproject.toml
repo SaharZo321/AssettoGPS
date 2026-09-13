@@ -1,6 +1,6 @@
 [project]
 name = "assetto-minimap"
-version = "0.1.0"
+version = "0.1.1"
 description = "Waze/GPS Minimap and Telemetry companion for Assetto Corsa & Shutoko Revival Project"
 readme = "README.md"
 license = "MIT"
@@ -11,6 +11,7 @@ dependencies = [
     "uvicorn[standard]>=0.28.0",
     "websockets>=12.0",
     "psutil>=7.2.2",
+    "cryptography>=42.0",
 ]
 
 [tool.uv]
