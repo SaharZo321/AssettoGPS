@@ -3,11 +3,21 @@ type SpeedUnit = "kmh" | "mph";
 type ThemeMode = "dark" | "light" | "auto";
 type ActiveTheme = Exclude<ThemeMode, "auto">;
 type OrientationMode = "headingUp" | "northUp";
+type NavigationIconName =
+  | "bridge"
+  | "city"
+  | "finish"
+  | "junction"
+  | "landmark"
+  | "parking"
+  | "pin"
+  | "road"
+  | "tunnel";
 
 interface NavigationInstruction {
   title?: string | null;
   subtitle?: string | null;
-  icon?: string | null;
+  icon?: NavigationIconName | null;
   alertLevel?: string | null;
   [key: string]: unknown;
 }

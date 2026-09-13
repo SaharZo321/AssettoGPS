@@ -293,11 +293,18 @@
   height: 48px;
   border-radius: 12px;
   background: var(--accent-blue);
+  color: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 26px;
   flex-shrink: 0;
+}
+
+.nav-banner-svg {
+  display: block;
+  width: 30px;
+  height: 30px;
+  overflow: visible;
 }
 
 #nav-text {
@@ -1380,8 +1387,11 @@
   #nav-icon-container {
     width: 32px;
     height: 32px;
-    font-size: 18px;
     border-radius: 8px;
+  }
+  .nav-banner-svg {
+    width: 21px;
+    height: 21px;
   }
   #nav-title {
     font-size: 0.95rem;

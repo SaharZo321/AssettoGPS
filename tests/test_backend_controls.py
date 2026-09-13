@@ -637,6 +637,30 @@ def test_frontend_is_navigation_only_and_uses_local_maplibre():
     assert not (server.FRONTEND_DIR / "assets" / "maps" / "srp.svg").exists()
 
 
+def test_navigation_banner_uses_semantic_svg_icons_without_emoji():
+    icon_sources = (
+        server.FRONTEND_DIR / "index.html",
+        server.FRONTEND_DIR / "src" / "navigation-ui.ts",
+        BACKEND_DIR / "navigation.py",
+        BACKEND_DIR / "ac_track_finder.py",
+    )
+    emoji_pattern = re.compile(r"[\U0001F000-\U0001FAFF\u2600-\u27BF]")
+
+    for source in icon_sources:
+        assert not emoji_pattern.search(source.read_text(encoding="utf-8")), source
+
+    ui_source = (server.FRONTEND_DIR / "src" / "navigation-ui.ts").read_text(
+        encoding="utf-8"
+    )
+    index = (server.FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
+    assert "NAVIGATION_ICON_PATHS" in ui_source
+    assert 'class="nav-banner-svg"' in index
+    assert all(
+        poi["icon"] in {"bridge", "city", "junction", "landmark", "parking"}
+        for poi in ac_track_finder.SRP_POIS
+    )
+
+
 def test_maplibre_is_pinned_and_generated_for_offline_runtime():
     repository_root = server.FRONTEND_DIR.parent
     package_manifest = json.loads(

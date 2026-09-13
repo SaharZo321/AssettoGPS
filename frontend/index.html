@@ -12,7 +12,7 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="/vendor/maplibre-gl/maplibre-gl.css?v=6.5.0">
   <link rel="stylesheet" href="/css/waze-theme.css?v=43">
-  <link rel="stylesheet" href="/css/style.css?v=49">
+  <link rel="stylesheet" href="/css/style.css?v=50">
 </head>
 <body>
   <div id="app-container">
@@ -28,7 +28,12 @@
 
     <!-- Top Waze Navigation Banner -->
     <div id="nav-banner" class="glass-card">
-      <div id="nav-icon-container">🏁</div>
+      <div id="nav-icon-container" aria-hidden="true">
+        <svg class="nav-banner-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 21V4m0 1c4-3 7 3 14 0v9c-7 3-10-3-14 0" />
+          <path d="M9 5v4m4-2v4m4-5v4M7 10h4m4 0h4" />
+        </svg>
+      </div>
       <div id="nav-text">
         <div id="nav-title">Assetto Corsa GPS</div>
         <div id="nav-subtitle">Live Navigation Active</div>
@@ -370,7 +375,7 @@
   <script src="/js/interpolation.js?v=43"></script>
   <script src="/js/navigation-map-renderer.js?v=61"></script>
   <script src="/js/navigation-controller.js?v=2"></script>
-  <script src="/js/navigation-ui.js?v=45"></script>
+  <script src="/js/navigation-ui.js?v=46"></script>
   <script src="/js/version.js?v=1"></script>
   <script src="/js/app.js?v=54"></script>
 </body>
