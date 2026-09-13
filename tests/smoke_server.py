@@ -2,7 +2,6 @@
 
 import argparse
 import asyncio
-import contextlib
 import json
 from pathlib import Path
 import re
@@ -59,26 +58,24 @@ def launcher_arguments(lua_path: Path, port: int):
     if not match:
         raise RuntimeError("Cannot find the Lua server launch arguments")
     arguments = json.loads("[" + match[1].replace("tostring(server_port)", f'"{port}"') + "]")
-    for endpoint in ("status", "environment", "shutdown"):
-        if f'"http://127.0.0.1:" .. server_port .. "/api/{endpoint}"' not in source:
-            raise RuntimeError(f"Lua {endpoint} does not use the HTTP loopback control listener")
+    if '":https-ignore-errors"] = {"ca"}' not in source:
+        raise RuntimeError("Lua does not narrowly allow the self-signed certificate authority")
+    if '"https://127.0.0.1:" .. server_port .. "/api/status"' not in source:
+        raise RuntimeError("Lua status check does not use HTTPS on the selected port")
     return arguments
 
 
-def unused_port_pair():
-    # Avoid ephemeral ports: Windows can assign port+1 to the test's own
-    # outgoing readiness probe while the executable is still unpacking.
+def unused_non_ephemeral_port():
+    # Avoid Windows' ephemeral client-port range while the executable unpacks.
     for _ in range(100):
         port = 10000 + secrets.randbelow(20000)
-        with contextlib.ExitStack() as stack:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             try:
-                for candidate in (port, port + 1):
-                    sock = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_STREAM))
-                    sock.bind(("0.0.0.0", candidate))
+                sock.bind(("0.0.0.0", port))
+                return port
             except OSError:
                 continue
-        return port
-    raise RuntimeError("Cannot find two free adjacent ports for the launcher test")
+    raise RuntimeError("Cannot find a free port for the launcher test")
 
 
 def assert_mock_flag_rejected(server_command):
@@ -99,7 +96,7 @@ def assert_mock_flag_rejected(server_command):
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--launcher", type=Path, help="Test this shipped Lua launcher's dual HTTP/HTTPS configuration")
+    parser.add_argument("--launcher", type=Path, help="Test this shipped Lua launcher's HTTPS configuration")
     parser.add_argument(
         "server_command",
         nargs="+",
@@ -108,7 +105,7 @@ def main() -> int:
     args = parser.parse_args()
     assert_mock_flag_rejected(args.server_command)
 
-    port = unused_port_pair() if args.launcher else unused_port()
+    port = unused_non_ephemeral_port() if args.launcher else unused_port()
     command = [
         *args.server_command,
         "--host",
@@ -120,18 +117,24 @@ def main() -> int:
         command = [*args.server_command, *launcher_arguments(args.launcher, port)]
     server_log = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
     process = subprocess.Popen(command, stdout=server_log, stderr=subprocess.STDOUT)
-    base_url = f"http://127.0.0.1:{port}"
+    context = None
+    if args.launcher:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    scheme = "https" if args.launcher else "http"
+    base_url = f"{scheme}://127.0.0.1:{port}"
     control_headers = {
         "Content-Type": "application/json",
         "X-AssettoGPS-Control": "1",
     }
 
     try:
-        status_code, status = wait_until_ready(base_url)
+        status_code, status = wait_until_ready(base_url, context=context)
         if status_code != 200 or "mode" in status:
             raise RuntimeError(f"Unexpected status response: {status_code} {status}")
 
-        with urllib.request.urlopen(f"{base_url}/", timeout=2.0) as response:
+        with urllib.request.urlopen(f"{base_url}/", timeout=2.0, context=context) as response:
             frontend = response.read().decode("utf-8")
         if response.status != 200 or "<html" not in frontend.lower():
             raise RuntimeError("Bundled frontend was not served")
@@ -159,7 +162,7 @@ def main() -> int:
             "/vendor/maplibre-gl/LICENSE.txt": {"text/plain"},
         }
         for asset_path, expected_content_types in frontend_assets.items():
-            with urllib.request.urlopen(f"{base_url}{asset_path}", timeout=2.0) as response:
+            with urllib.request.urlopen(f"{base_url}{asset_path}", timeout=2.0, context=context) as response:
                 content = response.read()
                 content_type = response.headers.get_content_type()
             if (
@@ -172,7 +175,7 @@ def main() -> int:
                     f"({response.status}, {content_type}, {len(content)} bytes)"
                 )
 
-        frame = asyncio.run(receive_telemetry_frame(port))
+        frame = asyncio.run(receive_telemetry_frame(port, context))
         if "connected" not in frame or frame.get("isMock"):
             raise RuntimeError(f"Unexpected WebSocket telemetry frame: {frame}")
 
@@ -182,6 +185,7 @@ def main() -> int:
                 method="POST",
                 headers={"Content-Type": "application/json"},
                 payload={"mode": "mock"},
+                context=context,
             )
         except urllib.error.HTTPError as error:
             if error.code not in (404, 405):
@@ -195,6 +199,7 @@ def main() -> int:
                 method="POST",
                 headers={"Content-Type": "application/json"},
                 payload={"headlights": True},
+                context=context,
             )
         except urllib.error.HTTPError as error:
             if error.code != 403:
@@ -207,34 +212,24 @@ def main() -> int:
             method="POST",
             headers=control_headers,
             payload={"headlights": True},
+            context=context,
         )
         if environment_code != 200:
             raise RuntimeError(f"Environment endpoint returned {environment_code}")
 
         if args.launcher:
-            expected_url = f"https://{status['localIp']}:{port + 1}"
-            if status.get("httpsUrl") != expected_url:
+            expected_url = f"https://{status['localIp']}:{port}"
+            if status.get("httpsUrl") != expected_url or status.get("httpUrl") is not None:
                 raise RuntimeError(f"Launcher did not advertise HTTPS: {status}")
-            # Test the local, self-signed listener without modifying OS trust.
-            # This exception is confined to the smoke test, never CSP control.
-            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-            https_url = f"https://127.0.0.1:{port + 1}"
-            _, secure_status = wait_until_ready(https_url, context=context)
-            if secure_status.get("httpsUrl") != expected_url or not secure_status["cspConnected"]:
-                raise RuntimeError(f"HTTPS did not share the HTTP CSP environment state: {secure_status}")
-            with urllib.request.urlopen(https_url, context=context, timeout=3) as response:
-                if "<html" not in response.read().decode().lower():
-                    raise RuntimeError("HTTPS frontend was not served")
-            secure_frame = asyncio.run(receive_telemetry_frame(port + 1, context))
-            if "connected" not in secure_frame:
-                raise RuntimeError(f"Invalid WSS telemetry: {secure_frame}")
+            _, secure_status = wait_until_ready(base_url, context=context)
+            if not secure_status["cspConnected"]:
+                raise RuntimeError(f"HTTPS did not preserve CSP environment state: {secure_status}")
 
         shutdown_code, _ = request_json(
             f"{base_url}/api/shutdown",
             method="POST",
             headers=control_headers,
+            context=context,
         )
         if shutdown_code != 200:
             raise RuntimeError(f"Shutdown endpoint returned {shutdown_code}")

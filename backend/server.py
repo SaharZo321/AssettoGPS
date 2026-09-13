@@ -464,7 +464,7 @@ def parse_args(argv=None):
         "--https-only",
         action="store_true",
         help="Serve HTTPS only, on --port, instead of a plain-HTTP + HTTPS pair. "
-        "The packaged launcher uses dual mode for HTTP loopback control.",
+        "Used by the packaged launcher so its selected port is the phone URL port.",
     )
     return parser.parse_args(argv)
 
@@ -539,9 +539,9 @@ def main(argv=None):
             if not _port_is_available(args.host, bind_port):
                 raise OSError(f"port {bind_port} is already in use")
         except Exception as e:
-            # Preserve HTTP control if certificate setup or the HTTPS port
-            # fails. The packaged launcher uses dual mode and reports this
-            # fallback to the user; release smoke tests require HTTPS to work.
+            # Preserve service over HTTP if certificate setup or the HTTPS
+            # port fails. The launcher detects and reports this fallback;
+            # release smoke tests require packaged HTTPS to work.
             print(f"[!] Could not set up HTTPS ({e}); continuing with HTTP only.", file=sys.stderr, flush=True)
             dual_mode = False
             https_only = False

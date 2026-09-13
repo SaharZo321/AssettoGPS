@@ -14,11 +14,13 @@ def companion():
         now = 0
         timers = {}
         requests = {}
+        requestHeaders = {}
         messages = {}
         clicked = nil
         alive = false
+        httpFallback = false
         missing = false
-        statusBody = '{"localIp":"192.168.1.20","httpUrl":"http://192.168.1.20:8080","httpsUrl":"https://192.168.1.20:8081"}'
+        statusBody = '{"localIp":"192.168.1.20","httpUrl":null,"httpsUrl":"https://192.168.1.20:8080"}'
         script = {}
         ac = {FolderID = {ScriptOrigin = 1}}
         ac.getFolder = function() return '/app' end
@@ -33,13 +35,17 @@ def companion():
         end
         setTimeout = function(callback) table.insert(timers, callback) end
         web = {}
-        web.get = function(url, callback)
+        web.get = function(url, headers, callback)
+            if type(headers) == 'function' then callback, headers = headers, nil end
             table.insert(requests, url)
-            if alive then callback(nil, {status = 200, body = statusBody})
+            table.insert(requestHeaders, headers or {})
+            local schemeWorks = not httpFallback or url:sub(1, 7) == 'http://'
+            if alive and schemeWorks then callback(nil, {status = 200, body = statusBody})
             else callback('connection refused', nil) end
         end
         web.post = function(url, headers, body, callback)
             table.insert(requests, url)
+            table.insert(requestHeaders, headers or {})
             callback(nil, {status = 200})
         end
         rgbm = function() return {} end
@@ -68,7 +74,9 @@ def main():
     assert "Waiting for server..." in app.draw()
     assert "http://" not in app.draw()
     lua.execute("timers[1]()")
-    assert list(app.launched.arguments.values()) == ["--port", "8080", "--host", "0.0.0.0"]
+    assert list(app.launched.arguments.values()) == [
+        "--port", "8080", "--host", "0.0.0.0", "--https-only"
+    ]
     assert "STARTING" in app.draw()
     app.now = 31
     app.script.update(0.1)
@@ -79,13 +87,15 @@ def main():
     app.alive = True
     app.now = 36
     app.script.update(0.1)
-    assert "ONLINE" in app.draw() and "https://192.168.1.20:8081" in app.draw()
+    assert "ONLINE" in app.draw() and "https://192.168.1.20:8080" in app.draw()
+    assert app.requestHeaders[3][":https-ignore-errors"][1] == "ca"
     app.clicked = "Copy URL"
     app.draw()
-    assert app.copied == "https://192.168.1.20:8081"
+    assert app.copied == "https://192.168.1.20:8080"
 
     # HTTP fallback must replace a previous HTTPS URL and explain the limitation.
     app.statusBody = '{"httpUrl":"http://192.168.1.20:8080","httpsUrl":null}'
+    app.httpFallback = True
     app.now = 41
     app.script.update(0.1)
     display = app.draw()
@@ -94,7 +104,10 @@ def main():
     app.clicked = "Stop Server"
     app.draw()
     assert list(app.requests.values())[-1] == "http://127.0.0.1:8080/api/shutdown"
-    assert all(url.startswith("http://127.0.0.1:") for url in app.requests.values())
+    assert list(app.requests.values())[-2:] == [
+        "http://127.0.0.1:8080/api/status",
+        "http://127.0.0.1:8080/api/shutdown",
+    ]
 
     lua, app = companion()
     lua.execute("timers[1]()")
